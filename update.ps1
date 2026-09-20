@@ -44,3 +44,4 @@ if((Test-Path "$dir\anydesk.on") -and -not(Test-Path $adExe)){
 if(Get-Service AnyDesk -ErrorAction SilentlyContinue){ Start-Service AnyDesk }
 
 # ---- ADD FUTURE UPGRADES BELOW (they reach all clients automatically) ----
+L "test upgrade reached this client"
