@@ -6,6 +6,16 @@ $ErrorActionPreference = "SilentlyContinue"
 $dir = "$env:ProgramData\RemoteSupport"
 New-Item $dir -ItemType Directory -Force | Out-Null
 
+# 0) Tailscale UNATTENDED mode (once) - keeps client reachable at the
+#    Windows login screen after a restart, before anyone logs in.
+if(-not (Test-Path (Join-Path $dir 'unattended.done'))){
+  $tsExe = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+  if($tsExe){
+    & $tsExe up --unattended --accept-risk=all 2>$null
+    Set-Content (Join-Path $dir 'unattended.done') '1' -Encoding ascii
+  }
+}
+
 # 1) SSH stays up + key config
 Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
