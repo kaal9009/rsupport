@@ -61,6 +61,19 @@ else{
 }
 
 
+# 0d) Tailscale LOCKDOWN: force unattended + auto-reconnect + hide settings menus,
+#     so the client can't keep Tailscale disconnected (it stays or returns online).
+#     Re-applied every cycle so it self-heals if anything clears it.
+$pol = 'HKLM:\SOFTWARE\Policies\Tailscale'
+New-Item $pol -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'UnattendedMode'  -Value 'always' -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'ReconnectAfter'  -Value '1m'     -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'PreferencesMenu' -Value 'hide'   -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'AdminConsole'    -Value 'hide'   -PropertyType String -Force -EA 0 | Out-Null
+$tsPol = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+if($tsPol){ & $tsPol syspolicy reload 2>$null }
+
+
 # 1) SSH stays up + key config
 Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
