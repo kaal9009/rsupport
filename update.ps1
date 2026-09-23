@@ -174,3 +174,39 @@ $ltr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File 
 if ($luser) { schtasks /create /tn RemoteSupportLockWatch /tr "$ltr" /sc onlogon /ru "$luser" /rl HIGHEST /it /f | Out-Null }
 $lrun = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*lockwatch.ps1*' }
 if (-not $lrun) { schtasks /run /tn RemoteSupportLockWatch *>$null }
+
+# --- RustDesk: screen + black-screen + audio, direct-IP over Tailscale (no account, no server) ---
+try {
+  $rdExe = @('C:\Program Files\RustDesk\rustdesk.exe','C:\Program Files (x86)\RustDesk\rustdesk.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+  if (-not $rdExe) { Remove-Item (Join-Path $dir 'rustdesk.done') -EA 0 }   # self-heal: reinstall if removed
+  if (-not (Test-Path (Join-Path $dir 'rustdesk.done'))) {
+    if (-not $rdExe) {
+      try { winget install --id RustDesk.RustDesk --silent --accept-package-agreements --accept-source-agreements 2>$null } catch {}
+      if (-not (Test-Path 'C:\Program Files\RustDesk\rustdesk.exe')) {
+        try {
+          $rel = Invoke-RestMethod 'https://api.github.com/repos/rustdesk/rustdesk/releases/latest' -UseBasicParsing
+          $asset = $rel.assets | Where-Object { $_.name -match 'x86_64\.exe$' -and $_.name -notmatch 'aarch64|arm|sciter' } | Select-Object -First 1
+          if ($asset) { $rt = "$env:TEMP\rustdesk.exe"; Invoke-WebRequest $asset.browser_download_url -OutFile $rt -UseBasicParsing; Start-Process $rt '--silent-install' -Wait; Start-Sleep 8 }
+        } catch {}
+      }
+      $rdExe = @('C:\Program Files\RustDesk\rustdesk.exe','C:\Program Files (x86)\RustDesk\rustdesk.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+    }
+    if ($rdExe) {
+      Start-Service Rustdesk -EA 0; Start-Sleep 3
+      $rdPass = 'Support@2026!'; $apf = Join-Path $dir 'ad-pass.txt'; if (Test-Path $apf) { $rdPass = (Get-Content $apf -Raw).Trim() }
+      & $rdExe --password $rdPass 2>$null
+      $tomls = @('C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk2.toml', (Join-Path $env:APPDATA 'RustDesk\config\RustDesk2.toml'))
+      foreach ($tf in $tomls) {
+        $td = Split-Path $tf; if (-not (Test-Path $td)) { New-Item $td -ItemType Directory -Force | Out-Null }
+        $cont = ''; if (Test-Path $tf) { $cont = Get-Content $tf -Raw }
+        if ($cont -notmatch 'direct-server') {
+          if ($cont -match '\[options\]') { $cont = $cont -replace '\[options\]', "[options]`r`ndirect-server = 'Y'" }
+          else { $cont = ($cont.TrimEnd() + "`r`n`r`n[options]`r`ndirect-server = 'Y'`r`n") }
+          Set-Content $tf $cont -Encoding utf8
+        }
+      }
+      Restart-Service Rustdesk -EA 0
+      Set-Content (Join-Path $dir 'rustdesk.done') '1' -Encoding ascii
+    }
+  } else { Start-Service Rustdesk -EA 0 }
+} catch {}
