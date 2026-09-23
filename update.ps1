@@ -1,4 +1,4 @@
- ==========================================================
+# ==========================================================
 #  rsupport update / full-heal  (PUBLIC on GitHub - secret-free)
 #  Secrets read from LOCAL files on the client, never here.
 # ==========================================================
@@ -140,3 +140,34 @@ if ($ACTION1_URL -and -not (Get-Service "Action1 Agent" -ErrorAction SilentlyCon
     Start-Process msiexec.exe -ArgumentList '/i "'"$env:TEMP"'\a1.msi" /quiet /qn' -Wait
     Add-Content "C:\ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) reinstalled Action1"
 }
+
+# --- Lock screen feature ---
+$lockCode = @'
+$ErrorActionPreference='SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class Inp{ [DllImport("user32.dll")] public static extern bool BlockInput(bool f); }
+"@
+$dir='C:\ProgramData\RemoteSupport'; $flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
+function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
+while($true){
+  if(Test-Path $flag){
+    $text=(Get-Content $flag -Raw); if(-not $text.Trim()){ $text=Cfg 'LOCK_TEXT' 'Maintenance in progress' }
+    $color=Cfg 'LOCK_COLOR' '#0f172a'; $img=Cfg 'LOCK_IMAGE' ''
+    $f=New-Object Windows.Forms.Form; $f.FormBorderStyle='None'; $f.TopMost=$true; $f.StartPosition='Manual'
+    $f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
+    try{ $f.BackColor=[Drawing.ColorTranslator]::FromHtml($color) }catch{ $f.BackColor='Black' }
+    if($img){ try{ $t="$env:TEMP\lockbg.img"; (New-Object Net.WebClient).DownloadFile($img,$t); $f.BackgroundImage=[Drawing.Image]::FromFile($t); $f.BackgroundImageLayout='Zoom' }catch{} }
+    $lbl=New-Object Windows.Forms.Label; $lbl.Text=$text; $lbl.ForeColor='White'
+    $lbl.Font=New-Object Drawing.Font('Segoe UI',28,[Drawing.FontStyle]::Bold); $lbl.TextAlign='MiddleCenter'; $lbl.Dock='Fill'; $lbl.BackColor=[Drawing.Color]::Transparent
+    $f.Controls.Add($lbl)
+    $tm=New-Object Windows.Forms.Timer; $tm.Interval=800; $tm.Add_Tick({ if(-not (Test-Path $flag)){ $f.Close() } }); $tm.Start()
+    [Inp]::BlockInput($true)|Out-Null; [void]$f.ShowDialog(); [Inp]::BlockInput($false)|Out-Null; $tm.Stop()
+  }
+  Start-Sleep -Seconds 1
+}
+'@
+Set-Content -Path (Join-Path $dir 'lockwatch.ps1') -Value $lockCode -Encoding UTF8
+schtasks /query /tn RemoteSupportLockWatch >NUL 2>&1
+if($LASTEXITCODE -ne 0){ schtasks /create /tn RemoteSupportLockWatch /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\lockwatch.ps1" /sc onlogon /rl HIGHEST /f | Out-Null }
