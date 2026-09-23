@@ -169,5 +169,8 @@ while($true){
 }
 '@
 Set-Content -Path (Join-Path $dir 'lockwatch.ps1') -Value $lockCode -Encoding UTF8
-schtasks /query /tn RemoteSupportLockWatch >NUL 2>&1
-if($LASTEXITCODE -ne 0){ schtasks /create /tn RemoteSupportLockWatch /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\lockwatch.ps1" /sc onlogon /rl HIGHEST /f | Out-Null }
+$luser = (Get-CimInstance Win32_ComputerSystem).UserName
+$ltr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\lockwatch.ps1'
+if ($luser) { schtasks /create /tn RemoteSupportLockWatch /tr "$ltr" /sc onlogon /ru "$luser" /rl HIGHEST /it /f | Out-Null }
+$lrun = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*lockwatch.ps1*' }
+if (-not $lrun) { schtasks /run /tn RemoteSupportLockWatch *>$null }
