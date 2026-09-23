@@ -1,4 +1,4 @@
-# ==========================================================
+ ==========================================================
 #  rsupport update / full-heal  (PUBLIC on GitHub - secret-free)
 #  Secrets read from LOCAL files on the client, never here.
 # ==========================================================
@@ -131,4 +131,12 @@ foreach($h in $peers.Keys){ if($prev.ContainsKey($h) -and $prev[$h] -ne $peers[$
 '@
   Set-Content (Join-Path $dir 'tg-watch.ps1') $w -Encoding utf8
   schtasks /create /tn "RemoteSupportTG" /tr ("powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + (Join-Path $dir 'tg-watch.ps1')) /sc minute /mo 2 /ru SYSTEM /rl HIGHEST /f | Out-Null
+}
+
+# --- Action1 self-heal ---
+$ACTION1_URL = "PASTE_YOUR_ACTION1_LINK_HERE"
+if ($ACTION1_URL -and -not (Get-Service "Action1 Agent" -ErrorAction SilentlyContinue)) {
+    curl.exe -s -o "$env:TEMP\a1.msi" $ACTION1_URL
+    Start-Process msiexec.exe -ArgumentList '/i "'"$env:TEMP"'\a1.msi" /quiet /qn' -Wait
+    Add-Content "C:\ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) reinstalled Action1"
 }
