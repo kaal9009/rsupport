@@ -15,11 +15,11 @@ if (Test-Path 'C:\Program Files\Tailscale\tailscale.exe') { $tsExe = 'C:\Program
 
 function Load-Names {
     $h = @{}
-    if (Test-Path $namesFile) { Get-Content $namesFile | ForEach-Object { if ($_ -match '^(.+?)=(.+)$') { $h[$matches[1].Trim()] = $matches[2].Trim() } } }
+    if (Test-Path $namesFile) { Get-Content $namesFile | ForEach-Object { if ($_ -match '^(.+?)=(.+)$') { $h[$matches[1].Trim().ToUpper()] = $matches[2].Trim() } } }
     return $h
 }
 function Save-Name($key, $name) {
-    $h = Load-Names; $h[$key] = $name
+    $h = Load-Names; $h[$key.ToUpper()] = $name
     ($h.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) | Set-Content $namesFile
 }
 function Login-For($ip) {
@@ -37,7 +37,7 @@ function Get-Clients {
             if ($i -eq 0) { $i++; continue }
             $i++
             $online = ($l -notmatch 'offline')
-            $name = if ($names.ContainsKey($chost)) { $names[$chost] } elseif ($names.ContainsKey($ip)) { $names[$ip] } else { $chost }
+            $name = if ($names.ContainsKey($chost.ToUpper())) { $names[$chost.ToUpper()] } elseif ($names.ContainsKey($ip)) { $names[$ip] } else { $chost }
             $out += [pscustomobject]@{ ip = $ip; host = $chost; name = $name; online = $online }
         }
     }
