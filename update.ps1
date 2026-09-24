@@ -161,33 +161,51 @@ public class Locker{
   [DllImport("user32.dll",SetLastError=true)] static extern bool UnhookWindowsHookEx(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h,int code,IntPtr w,IntPtr l);
   [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+  [DllImport("user32.dll")] static extern IntPtr FindWindow(string c,string w);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int c);
+  static void Bar(int c){ IntPtr t=FindWindow("Shell_TrayWnd",null); if(t!=IntPtr.Zero)ShowWindow(t,c); IntPtr s=FindWindow("Shell_SecondaryTrayWnd",null); if(s!=IntPtr.Zero)ShowWindow(s,c); }
   static IntPtr Swallow(int code,IntPtr w,IntPtr l){ if(code>=0) return (IntPtr)1; return CallNextHookEx(IntPtr.Zero,code,w,l); }
-  public static void Lock(){ if(kH!=IntPtr.Zero) return; kP=Swallow; mP=Swallow; IntPtr h=GetModuleHandle(null); kH=SetWindowsHookEx(WH_KEYBOARD_LL,kP,h,0); mH=SetWindowsHookEx(WH_MOUSE_LL,mP,h,0); BlockInput(true); }
-  public static void Unlock(){ BlockInput(false); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} }
+  public static void Lock(){ if(kH!=IntPtr.Zero) return; kP=Swallow; mP=Swallow; IntPtr h=GetModuleHandle(null); kH=SetWindowsHookEx(WH_KEYBOARD_LL,kP,h,0); mH=SetWindowsHookEx(WH_MOUSE_LL,mP,h,0); Bar(0); BlockInput(true); }
+  public static void Unlock(){ BlockInput(false); Bar(5); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} }
 }
 "@
 $dir='C:\ProgramData\RemoteSupport'; $script:flag=Join-Path $dir 'LOCK.flag'; $cfg=Join-Path $dir 'config.txt'
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
+try{ $fc='HKCU:\Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION'; New-Item $fc -Force | Out-Null; Set-ItemProperty $fc 'powershell.exe' 11001 -Type DWord } catch {}
 while($true){
   if(Test-Path $script:flag){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     $bg=Cfg 'LOCK_COLOR' '#000000'
+    $dots=''; for($i=0;$i -lt 8;$i++){ $op=[Math]::Round(1-($i*0.11),2); $dots+=("<i style=""transform:rotate("+($i*45)+"deg) translateY(-26px);opacity:"+$op+"""></i>") }
+    $html=@"
+<!-- saved from url=(0014)about:internet -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI',Tahoma,sans-serif;cursor:none}
+.c{position:absolute;top:50%;left:50%;margin-top:-90px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
+.r{width:56px;height:56px;margin:0 auto 42px;position:relative;animation:sp 1s steps(8) infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.r i{position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#fff}
+.t{font-size:28px;font-weight:300}
+.s{font-size:14px;color:#cfcfcf;margin-top:18px;font-weight:300}
+.co{font-size:12px;color:#8f8f8f;margin-top:44px}
+</style></head><body><div class="c">
+<div class="r">$dots</div>
+<div class="t">Working on updates <span id="p">0</span>% complete</div>
+<div class="s">Don't turn off your PC. This will take a while.</div>
+<div class="co">$company</div>
+</div><script>
+var p=0;setInterval(function(){if(p<100){p=p+1;document.getElementById('p').innerHTML=p;}},9000);
+</script></body></html>
+"@
+    $hp=Join-Path $dir 'lock.html'; Set-Content $hp $html -Encoding UTF8
     $script:f=New-Object Windows.Forms.Form; $script:f.FormBorderStyle='None'; $script:f.TopMost=$true; $script:f.StartPosition='Manual'
     $script:f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
     try{ $script:f.BackColor=[Drawing.ColorTranslator]::FromHtml($bg) }catch{ $script:f.BackColor='Black' }
-    $cx=[int]($script:f.Width/2); $cy=[int]($script:f.Height/2)
-    $script:sp=New-Object Windows.Forms.Panel; $script:sp.Size=New-Object Drawing.Size(70,70); $script:sp.Location=New-Object Drawing.Point(($cx-35),($cy-150)); $script:sp.BackColor=[Drawing.Color]::Transparent; $script:f.Controls.Add($script:sp)
-    function NewLbl($top,$size,$col,$txt){ $l=New-Object Windows.Forms.Label; $l.AutoSize=$false; $l.Width=$script:f.Width; $l.Height=($size+22); $l.Left=0; $l.Top=$top; $l.TextAlign='MiddleCenter'; $l.ForeColor=$col; $l.Font=New-Object Drawing.Font('Segoe UI',$size); $l.Text=$txt; $l.BackColor=[Drawing.Color]::Transparent; return $l }
-    $script:main=NewLbl ($cy-45) 21 ([Drawing.Color]::White) 'Working on updates 0% complete'
-    $sub=NewLbl ($cy+15) 11 ([Drawing.Color]::FromArgb(190,200,215)) "Don't turn off your PC. This will take a while."
-    $comp=NewLbl ($cy+85) 9 ([Drawing.Color]::Gray) $company
-    $script:f.Controls.Add($script:main); $script:f.Controls.Add($sub); $script:f.Controls.Add($comp)
-    $script:ang=0; $script:start=Get-Date
-    $script:sp.Add_Paint({ param($s,$e)
-      $g=$e.Graphics; $g.SmoothingMode='AntiAlias'
-      for($i=0;$i -lt 8;$i++){ $a=($script:ang + $i*45)*[Math]::PI/180; $x=35+22*[Math]::Cos($a); $y=35+22*[Math]::Sin($a); $al=255-($i*26); if($al -lt 45){$al=45}; $br=New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb($al,255,255,255)); $g.FillEllipse($br,($x-4),($y-4),8,8); $br.Dispose() } })
-    $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=70
-    $script:tm.Add_Tick({ $script:ang=($script:ang+18)%360; $script:sp.Invalidate(); $el=((Get-Date)-$script:start).TotalSeconds; $p=[int][Math]::Floor($el/9); if($p -gt 100){$p=100}; $script:main.Text="Working on updates $p% complete"; if(-not (Test-Path $script:flag)){ $script:f.Close() } })
+    $wb=New-Object Windows.Forms.WebBrowser; $wb.Dock='Fill'; $wb.ScrollBarsEnabled=$false; $wb.IsWebBrowserContextMenuEnabled=$false; $wb.WebBrowserShortcutsEnabled=$false; $wb.AllowWebBrowserDrop=$false
+    $wb.Url=[Uri]("file:///"+($hp -replace '\\','/'))
+    $script:f.Controls.Add($wb)
+    $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=300
+    $script:tm.Add_Tick({ if(-not (Test-Path $script:flag)){ $script:f.Close() } })
     $script:tm.Start()
     [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }
