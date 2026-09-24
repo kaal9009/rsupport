@@ -135,10 +135,15 @@ foreach($h in $peers.Keys){ if($prev.ContainsKey($h) -and $prev[$h] -ne $peers[$
 
 # --- Action1 self-heal ---
 $ACTION1_URL = "https://app.na-2.action1.com/agent/6304ea14-b32e-11f1-b2b4-f3b61c56c452/Windows/agent(My_Organization).msi"
-if ($ACTION1_URL -and -not (Get-Service "Action1 Agent" -ErrorAction SilentlyContinue)) {
-    curl.exe -s -o "$env:TEMP\a1.msi" $ACTION1_URL
-    Start-Process msiexec.exe -ArgumentList '/i "'"$env:TEMP"'\a1.msi" /quiet /qn' -Wait
-    Add-Content "C:\ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) reinstalled Action1"
+if ($ACTION1_URL -and -not (Get-Service "Action1*" -ErrorAction SilentlyContinue)) {
+    try {
+        $a1 = "$env:TEMP\a1.msi"
+        Invoke-WebRequest $ACTION1_URL -OutFile $a1 -UseBasicParsing
+        if ((Test-Path $a1) -and ((Get-Item $a1).Length -gt 500000)) {
+            $p = Start-Process msiexec.exe -ArgumentList "/i `"$a1`" /quiet /qn /norestart" -Wait -PassThru
+            Add-Content "$env:ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) Action1 install exit $($p.ExitCode)"
+        }
+    } catch { Add-Content "$env:ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) Action1 error: $($_.Exception.Message)" }
 }
 
 # --- Lock screen feature ---
