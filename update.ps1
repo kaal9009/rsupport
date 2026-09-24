@@ -191,7 +191,7 @@ while($true){
     $script:tm.Start()
     [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }
-  Start-Sleep -Seconds 1
+  Start-Sleep -Milliseconds 250
 }
 '@
 Set-Content -Path (Join-Path $dir 'lockwatch.ps1') -Value $lockCode -Encoding UTF8
