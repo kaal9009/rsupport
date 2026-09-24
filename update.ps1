@@ -179,7 +179,7 @@ $dir='C:\ProgramData\RemoteSupport'; $script:flag=Join-Path $dir 'LOCK.flag'; $c
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
 try{ $fc='HKCU:\Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION'; New-Item $fc -Force | Out-Null; Set-ItemProperty $fc 'powershell.exe' 11001 -Type DWord } catch {}
 while($true){
-  if(Test-Path $script:flag){
+  if((Test-Path $script:flag) -and ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -lt 10)){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     $bg=Cfg 'LOCK_COLOR' '#000000'
     $html=@"
@@ -187,13 +187,13 @@ while($true){
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI',Tahoma,sans-serif;cursor:none}
 .c{position:absolute;top:50%;left:50%;margin-top:-90px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
-.r{width:60px;height:60px;margin:0 auto 44px;position:relative}
-.r i{position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#fff;transform-origin:3px 30px;animation:orbit 1.3s cubic-bezier(.5,0,.5,1) infinite}
+.r{width:66px;height:66px;margin:0 auto 46px;position:relative}
+.r i{position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#fff;transform-origin:3px 33px;animation:orbit 1.4s cubic-bezier(.55,.15,.45,.85) infinite}
 .r i:nth-child(1){animation-delay:0s}
-.r i:nth-child(2){animation-delay:.14s}
-.r i:nth-child(3){animation-delay:.28s}
-.r i:nth-child(4){animation-delay:.42s}
-.r i:nth-child(5){animation-delay:.56s}
+.r i:nth-child(2){animation-delay:-.12s}
+.r i:nth-child(3){animation-delay:-.24s}
+.r i:nth-child(4){animation-delay:-.36s}
+.r i:nth-child(5){animation-delay:-.48s}
 @keyframes orbit{to{transform:rotate(360deg)}}
 .t{font-size:28px;font-weight:300}
 .s{font-size:14px;color:#cfcfcf;margin-top:18px;font-weight:300}
@@ -215,7 +215,7 @@ var p=0;setInterval(function(){if(p<100){p=p+1;document.getElementById('p').inne
     $wb.Url=[Uri]("file:///"+($hp -replace '\\','/'))
     $script:f.Controls.Add($wb)
     $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=300
-    $script:tm.Add_Tick({ if(-not (Test-Path $script:flag)){ $script:f.Close() } })
+    $script:tm.Add_Tick({ if((-not (Test-Path $script:flag)) -or ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -gt 10)){ $script:f.Close() } })
     $script:tm.Start()
     [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }
