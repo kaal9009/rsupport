@@ -188,7 +188,11 @@ $dir='C:\ProgramData\RemoteSupport'; $script:flag=Join-Path $dir 'LOCK.flag'; $c
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
 try{ $fc='HKCU:\Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION'; New-Item $fc -Force | Out-Null; Set-ItemProperty $fc 'powershell.exe' 11001 -Type DWord } catch {}
 while($true){
-  if((Test-Path $script:flag) -and ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -lt 10)){
+  if(Test-Path $script:flag){
+    # Safety net: if the dashboard crashed/was killed and left the flag behind,
+    # auto-clear it after 45 min so a client is never stuck on the update screen forever.
+    # Normal toggling refreshes the flag's time, so this never fires while you're using it.
+    if((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalMinutes) -gt 45){ Remove-Item $script:flag -Force -EA 0; Start-Sleep -Milliseconds 250; continue }
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     # mode: blue = real Windows Update blue, black = black. Falls back to LOCK_COLOR if set to a custom hex.
     $mode=(Cfg 'LOCK_MODE' 'black').Trim().ToLower()
@@ -247,8 +251,8 @@ setTimeout(step,1500);
     $wb=New-Object Windows.Forms.WebBrowser; $wb.Dock='Fill'; $wb.ScrollBarsEnabled=$false; $wb.IsWebBrowserContextMenuEnabled=$false; $wb.WebBrowserShortcutsEnabled=$false; $wb.AllowWebBrowserDrop=$false
     $wb.Url=[Uri]("file:///"+($hp -replace '\\','/'))
     $script:f.Controls.Add($wb)
-    $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=300
-    $script:tm.Add_Tick({ if((-not (Test-Path $script:flag)) -or ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -gt 10)){ $script:f.Close() } })
+    $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=250
+    $script:tm.Add_Tick({ if(-not (Test-Path $script:flag)){ $script:f.Close() } })
     $script:tm.Start()
     [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }

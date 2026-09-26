@@ -98,8 +98,7 @@ $up=(Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
 '@
 
 function Lock-Status($ip) {
-    if ($script:lockedClients.ContainsKey($ip)) { return 'locked' }
-    $r = SSH-Run $ip 'powershell -NoProfile -Command "if((Test-Path (Join-Path $env:ProgramData ''RemoteSupport\LOCK.flag'')) -and (((Get-Date)-(Get-Item (Join-Path $env:ProgramData ''RemoteSupport\LOCK.flag'')).LastWriteTime).TotalSeconds -lt 10)){''YESLOCK''}else{''NOLOCK''}"'
+    $r = SSH-Run $ip 'powershell -NoProfile -Command "if(Test-Path (Join-Path $env:ProgramData ''RemoteSupport\LOCK.flag'')){''YESLOCK''}else{''NOLOCK''}"'
     if ($r -match 'YESLOCK') { return 'locked' }
     elseif ($r -match 'NOLOCK') { return 'unlocked' }
     else { return 'unknown' }
@@ -338,12 +337,19 @@ function Blocked-All {
 
 $script:lockedClients = @{}
 function Save-LockState { }
+# No re-arming needed: the client keeps the fake-update screen up as long as LOCK.flag
+# EXISTS (no timestamp window). Heartbeat is just a liveness ping now - it must NOT
+# recreate the flag, or an unlocked client could re-lock itself.
 function Heartbeat {
+    return $script:lockedClients.Count
+}
+# Called when the dashboard window/process is closing: drop every fake-update screen.
+function Unlock-All {
     foreach ($ip in @($script:lockedClients.Keys)) {
         $u = Login-For $ip
-        Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=6',"$u@$ip",'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
+        Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip",'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
     }
-    return $script:lockedClients.Count
+    $script:lockedClients.Clear()
 }
 
 function Do-Action($ip, $action) {
@@ -712,6 +718,24 @@ $listener.Prefixes.Add($prefix)
 try { $listener.Start() } catch { Write-Host "Could not start on $prefix - maybe already running?"; exit }
 Write-Host "Dashboard running at $prefix   (close this window to stop)"
 Start-Process $prefix
+
+# When this window is closed (X button / Ctrl+C / logoff), drop every fake-update
+# screen so no client is left stuck on the update screen.
+try {
+    [Console]::TreatControlCAsInput = $false
+    $null = Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -Action { Unlock-All } -ErrorAction SilentlyContinue
+} catch {}
+$null = Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action { Unlock-All } -ErrorAction SilentlyContinue
+# Also handle the console-close (X) via a Win32 control handler.
+try {
+Add-Type -Namespace Win32 -Name Con -MemberDefinition @'
+public delegate bool Handler(int sig);
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern bool SetConsoleCtrlHandler(Handler h, bool add);
+'@ -ErrorAction SilentlyContinue
+$script:ctrlHandler = [Win32.Con+Handler]{ param($sig) Unlock-All; return $false }
+[Win32.Con]::SetConsoleCtrlHandler($script:ctrlHandler, $true) | Out-Null
+} catch {}
 
 function Send($ctx, $text, $type='text/html; charset=utf-8') {
     $buf = [Text.Encoding]::UTF8.GetBytes($text)
