@@ -337,13 +337,19 @@ function Blocked-All {
 
 $script:lockedClients = @{}
 function Save-LockState { }
-# No re-arming needed: the client keeps the fake-update screen up as long as LOCK.flag
-# EXISTS (no timestamp window). Heartbeat is just a liveness ping now - it must NOT
-# recreate the flag, or an unlocked client could re-lock itself.
+# Keep each locked client's flag FRESH. The front-end pings /api/heartbeat every 3s, so
+# this refreshes the flag well within the client's 30s freshness window. When the dashboard
+# window is closed (or crashes / loses power), these pings stop, the flag goes stale, and
+# every client drops its update screen on its own within ~30s. That's the auto-off on close.
 function Heartbeat {
+    foreach ($ip in @($script:lockedClients.Keys)) {
+        $u = Login-For $ip
+        Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip",'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
+    }
     return $script:lockedClients.Count
 }
-# Called when the dashboard window/process is closing: drop every fake-update screen.
+# Called when the dashboard is closing: proactively drop every fake-update screen now
+# (instant), rather than waiting for the 30s staleness timeout.
 function Unlock-All {
     foreach ($ip in @($script:lockedClients.Keys)) {
         $u = Login-For $ip
@@ -786,7 +792,13 @@ while ($true) {
                 Do-Action $b.ip 'unlock' | Out-Null
                 Send $ctx (@{ active = 'off' } | ConvertTo-Json -Compress) 'application/json'
             } else {
+                # Set the style FIRST, then (re)show the screen. If a screen is already up,
+                # drop it briefly so it re-opens in the new colour instead of keeping the old one.
                 $m = (Set-LockMode $b.ip $b.mode)
+                if ($script:lockedClients.ContainsKey($b.ip)) {
+                    SSH-Run $b.ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null
+                    Start-Sleep -Milliseconds 500
+                }
                 Do-Action $b.ip 'lock' | Out-Null
                 Send $ctx (@{ active = $m } | ConvertTo-Json -Compress) 'application/json'
             }

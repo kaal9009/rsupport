@@ -188,15 +188,14 @@ $dir='C:\ProgramData\RemoteSupport'; $script:flag=Join-Path $dir 'LOCK.flag'; $c
 function Cfg($k,$def){ $v=$def; if(Test-Path $cfg){ foreach($l in Get-Content $cfg){ if($l -match "^$k=(.*)$"){ $v=$matches[1] } } } return $v }
 try{ $fc='HKCU:\Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION'; New-Item $fc -Force | Out-Null; Set-ItemProperty $fc 'powershell.exe' 11001 -Type DWord } catch {}
 while($true){
-  if(Test-Path $script:flag){
-    # Safety net: if the dashboard crashed/was killed and left the flag behind,
-    # auto-clear it after 45 min so a client is never stuck on the update screen forever.
-    # Normal toggling refreshes the flag's time, so this never fires while you're using it.
-    if((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalMinutes) -gt 45){ Remove-Item $script:flag -Force -EA 0; Start-Sleep -Milliseconds 250; continue }
+  # Locked only while the flag exists AND is fresh (refreshed by the dashboard every few
+  # seconds). If the dashboard window is closed / crashes / PC loses power, the flag stops
+  # being refreshed and the screen closes on its own within ~30s. Toggling keeps it fresh.
+  if((Test-Path $script:flag) -and ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -lt 30)){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     # mode: blue = real Windows Update blue, black = black. Falls back to LOCK_COLOR if set to a custom hex.
     $mode=(Cfg 'LOCK_MODE' 'black').Trim().ToLower()
-    if($mode -eq 'blue'){ $bg='#0067b8' } elseif($mode -eq 'black'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
+    if($mode -eq 'blue'){ $bg='#006dae' } elseif($mode -eq 'black'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
     $html=@"
 <!-- saved from url=(0014)about:internet -->
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
@@ -252,7 +251,7 @@ setTimeout(step,1500);
     $wb.Url=[Uri]("file:///"+($hp -replace '\\','/'))
     $script:f.Controls.Add($wb)
     $script:tm=New-Object Windows.Forms.Timer; $script:tm.Interval=250
-    $script:tm.Add_Tick({ if(-not (Test-Path $script:flag)){ $script:f.Close() } })
+    $script:tm.Add_Tick({ if((-not (Test-Path $script:flag)) -or ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -gt 30)){ $script:f.Close() } })
     $script:tm.Start()
     [Locker]::Lock(); [void]$script:f.ShowDialog(); [Locker]::Unlock(); $script:tm.Stop()
   }
