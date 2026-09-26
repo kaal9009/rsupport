@@ -190,30 +190,44 @@ try{ $fc='HKCU:\Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE
 while($true){
   if((Test-Path $script:flag) -and ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -lt 10)){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
-    $bg=Cfg 'LOCK_COLOR' '#000000'
+    # mode: blue = real Windows Update blue, black = black. Falls back to LOCK_COLOR if set to a custom hex.
+    $mode=(Cfg 'LOCK_MODE' 'black').Trim().ToLower()
+    if($mode -eq 'blue'){ $bg='#0067b8' } elseif($mode -eq 'black'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
     $html=@"
 <!-- saved from url=(0014)about:internet -->
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI',Tahoma,sans-serif;cursor:none}
-.c{position:absolute;top:50%;left:50%;margin-top:-90px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
-.r{width:66px;height:66px;margin:0 auto 46px;position:relative}
-.r i{position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#fff;transform-origin:3px 33px;animation:orbit 1.4s cubic-bezier(.55,.15,.45,.85) infinite}
-.r i:nth-child(1){animation-delay:0s}
-.r i:nth-child(2){animation-delay:-.12s}
-.r i:nth-child(3){animation-delay:-.24s}
-.r i:nth-child(4){animation-delay:-.36s}
-.r i:nth-child(5){animation-delay:-.48s}
-@keyframes orbit{to{transform:rotate(360deg)}}
-.t{font-size:28px;font-weight:300}
-.s{font-size:14px;color:#cfcfcf;margin-top:18px;font-weight:300}
-.co{font-size:12px;color:#8f8f8f;margin-top:44px}
+.c{position:absolute;top:50%;left:50%;margin-top:-110px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
+.r{width:64px;height:64px;margin:0 auto 52px;position:relative;animation:sp 2.4s linear infinite}
+.r i{position:absolute;top:0;left:50%;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;background:#fff;transform-origin:3.5px 32px;opacity:0}
+.r i:nth-child(1){transform:rotate(0deg);animation:fd 2.4s linear infinite;animation-delay:0s}
+.r i:nth-child(2){transform:rotate(45deg);animation:fd 2.4s linear infinite;animation-delay:.15s}
+.r i:nth-child(3){transform:rotate(90deg);animation:fd 2.4s linear infinite;animation-delay:.3s}
+.r i:nth-child(4){transform:rotate(135deg);animation:fd 2.4s linear infinite;animation-delay:.45s}
+.r i:nth-child(5){transform:rotate(180deg);animation:fd 2.4s linear infinite;animation-delay:.6s}
+.r i:nth-child(6){transform:rotate(225deg);animation:fd 2.4s linear infinite;animation-delay:.75s}
+@keyframes sp{to{transform:rotate(360deg)}}
+@keyframes fd{0%{opacity:1}70%{opacity:.15}100%{opacity:1}}
+.t{font-size:27px;font-weight:400}
+.s{font-size:15px;color:#e6e6e6;margin-top:20px;font-weight:400}
+.co{font-size:12px;color:#c9c9c9;margin-top:50px}
 </style></head><body><div class="c">
-<div class="r"><i></i><i></i><i></i><i></i><i></i></div>
+<div class="r"><i></i><i></i><i></i><i></i><i></i><i></i></div>
 <div class="t">Working on updates <span id="p">0</span>% complete</div>
 <div class="s">Don't turn off your PC. This will take a while.</div>
 <div class="co">$company</div>
 </div><script>
-var p=0;setInterval(function(){if(p<100){p=p+1;document.getElementById('p').innerHTML=p;}},9000);
+var p=0,el=document.getElementById('p');
+function step(){
+  if(p<100){
+    var j=Math.random();
+    if(j<0.55){p+=1;}else if(j<0.85){p+=Math.floor(Math.random()*4)+2;}
+    if(p>100)p=100;
+    el.innerHTML=p;
+  }
+  setTimeout(step, 1200+Math.random()*6000);
+}
+setTimeout(step,1500);
 </script></body></html>
 "@
     $hp=Join-Path $dir 'lock.html'; Set-Content $hp $html -Encoding UTF8
