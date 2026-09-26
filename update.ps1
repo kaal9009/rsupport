@@ -198,7 +198,7 @@ while($true){
     if($mode -eq 'blue'){ $bg='#006dae' } elseif($mode -eq 'black'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
     $html=@"
 <!-- saved from url=(0014)about:internet -->
-<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><style>
 html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI Light','Segoe UI',Tahoma,Arial,sans-serif;cursor:none}
 .c{position:absolute;top:50%;left:50%;transform:translate(-50%,-58%);text-align:center;color:#fff;white-space:nowrap}
 .loader{position:relative;width:50px;height:50px;margin:0 auto 46px}
@@ -243,7 +243,10 @@ function step(){
 setTimeout(step,1500);
 </script></body></html>
 "@
-    $hp=Join-Path $dir 'lock.html'; Set-Content $hp $html -Encoding UTF8
+    # Unique filename each time so the IE WebBrowser control can't show a cached old copy
+    # (that was making Black re-open in the previous Blue, etc). Clean up older ones first.
+    Get-ChildItem $dir -Filter 'lock_*.html' -EA 0 | Remove-Item -Force -EA 0
+    $hp=Join-Path $dir ('lock_' + [DateTime]::Now.Ticks + '.html'); Set-Content $hp $html -Encoding UTF8
     $script:f=New-Object Windows.Forms.Form; $script:f.FormBorderStyle='None'; $script:f.TopMost=$true; $script:f.StartPosition='Manual'
     $script:f.Bounds=[Windows.Forms.SystemInformation]::VirtualScreen
     try{ $script:f.BackColor=[Drawing.ColorTranslator]::FromHtml($bg) }catch{ $script:f.BackColor='Black' }

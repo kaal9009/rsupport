@@ -797,7 +797,7 @@ while ($true) {
                 $m = (Set-LockMode $b.ip $b.mode)
                 if ($script:lockedClients.ContainsKey($b.ip)) {
                     SSH-Run $b.ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null
-                    Start-Sleep -Milliseconds 500
+                    Start-Sleep -Milliseconds 900
                 }
                 Do-Action $b.ip 'lock' | Out-Null
                 Send $ctx (@{ active = $m } | ConvertTo-Json -Compress) 'application/json'
