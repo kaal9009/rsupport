@@ -196,27 +196,37 @@ while($true){
     $html=@"
 <!-- saved from url=(0014)about:internet -->
 <!DOCTYPE html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI',Tahoma,sans-serif;cursor:none}
-.c{position:absolute;top:50%;left:50%;margin-top:-110px;transform:translateX(-50%);text-align:center;color:#fff;white-space:nowrap}
-.r{width:64px;height:64px;margin:0 auto 52px;position:relative;animation:sp 2.4s linear infinite}
-.r i{position:absolute;top:0;left:50%;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;background:#fff;transform-origin:3.5px 32px;opacity:0}
-.r i:nth-child(1){transform:rotate(0deg);animation:fd 2.4s linear infinite;animation-delay:0s}
-.r i:nth-child(2){transform:rotate(45deg);animation:fd 2.4s linear infinite;animation-delay:.15s}
-.r i:nth-child(3){transform:rotate(90deg);animation:fd 2.4s linear infinite;animation-delay:.3s}
-.r i:nth-child(4){transform:rotate(135deg);animation:fd 2.4s linear infinite;animation-delay:.45s}
-.r i:nth-child(5){transform:rotate(180deg);animation:fd 2.4s linear infinite;animation-delay:.6s}
-.r i:nth-child(6){transform:rotate(225deg);animation:fd 2.4s linear infinite;animation-delay:.75s}
-@keyframes sp{to{transform:rotate(360deg)}}
-@keyframes fd{0%{opacity:1}70%{opacity:.15}100%{opacity:1}}
-.t{font-size:27px;font-weight:400}
-.s{font-size:15px;color:#e6e6e6;margin-top:20px;font-weight:400}
-.co{font-size:12px;color:#c9c9c9;margin-top:50px}
+html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI Light','Segoe UI',Tahoma,Arial,sans-serif;cursor:none}
+.c{position:absolute;top:50%;left:50%;transform:translate(-50%,-58%);text-align:center;color:#fff;white-space:nowrap}
+.loader{position:relative;width:50px;height:50px;margin:0 auto 46px}
+.loader .circle{position:absolute;width:48px;height:48px;opacity:0;transform:rotate(225deg);animation-iteration-count:infinite;animation-name:orbit;animation-duration:5.5s}
+.loader .circle:after{content:'';position:absolute;width:6px;height:6px;border-radius:5px;background:#fff}
+.loader .circle:nth-child(2){animation-delay:240ms}
+.loader .circle:nth-child(3){animation-delay:480ms}
+.loader .circle:nth-child(4){animation-delay:720ms}
+.loader .circle:nth-child(5){animation-delay:960ms}
+@keyframes orbit{
+0%{transform:rotate(225deg);opacity:1;animation-timing-function:ease-out}
+7%{transform:rotate(345deg);animation-timing-function:linear}
+30%{transform:rotate(455deg);animation-timing-function:ease-in-out}
+39%{transform:rotate(690deg);animation-timing-function:linear}
+70%{transform:rotate(815deg);opacity:1;animation-timing-function:ease-out}
+75%{transform:rotate(945deg);animation-timing-function:ease-out}
+76%{transform:rotate(945deg);opacity:0}
+100%{transform:rotate(945deg);opacity:0}
+}
+.t{font-size:23px;font-weight:400}
+.s{font-size:15px;margin-top:16px;font-weight:400}
+.b{position:fixed;bottom:11%;left:0;width:100%;text-align:center;font-size:15px;color:#fff}
+.co{font-size:12px;margin-top:40px;opacity:.85}
 </style></head><body><div class="c">
-<div class="r"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div class="loader"><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div></div>
 <div class="t">Working on updates <span id="p">0</span>% complete</div>
 <div class="s">Don't turn off your PC. This will take a while.</div>
 <div class="co">$company</div>
-</div><script>
+</div>
+<div class="b">Your PC will restart several times</div>
+<script>
 var p=0,el=document.getElementById('p');
 function step(){
   if(p<100){
