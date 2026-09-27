@@ -471,6 +471,10 @@ function Do-Action($ip, $action) {
         }
         'restart'  { SSH-Run $ip 'shutdown /r /t 0' | Out-Null; return "Restart sent." }
         'shutdown' { SSH-Run $ip 'shutdown /s /t 0' | Out-Null; return "Shutdown sent." }
+        'stoprestart' {
+            $r = SSH-Run $ip 'cmd /c "shutdown /a & shutdown /r /t 300 /f /c \"This PC will restart in 5 minutes.\""'
+            return "Pending shutdown cancelled. PC will restart in 5 min instead. (Only works if the shutdown was still counting down / not fully committed.)"
+        }
         'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
         'who'      { return (SSH-Run $ip 'query user') }
         'lock'     { SSH-Run $ip 'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null; $script:lockedClients[$ip]=$true; Save-LockState; return "Lock sent - client screen is locking." }
@@ -691,6 +695,7 @@ function panel(){
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
+     <button class="act" onclick="stopRestart()" title="If the client is shutting down, cancel it and restart the PC in 5 minutes instead">Stop shutdown &rarr; restart in 5 min</button>
    </div>
    <div id="out">Ready.</div>
    <div class="lockbox" style="border-color:#3a4a72">
@@ -716,6 +721,14 @@ async function act(a){
   if(a==='lock'){updProg(1,1,'Locked - client screen is showing the update screen.');setTimeout(hideProg,2500);setTimeout(checkLock,1500);}
   else if(a==='unlock'){updProg(1,1,'Unlocked - client screen released.');setTimeout(hideProg,2500);setTimeout(checkLock,1500);}
   if(o)o.textContent=j.output||'(no output)';}catch(e){hideProg();if(o)o.textContent='Error: '+e;}
+}
+async function stopRestart(){
+  if(!sel)return;
+  const o=document.getElementById('out');
+  if(!confirm(sel.name+': cancel any running shutdown and restart this PC in 5 minutes?'))return;
+  if(o)o.textContent='Sending...';
+  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoprestart'})});
+  const j=await r.json();if(o)o.textContent=j.output||'(no output)';}catch(e){if(o)o.textContent='Error: '+e;}
 }
 async function checkLock(){
   const el=document.getElementById('lockStatus');if(!el||!sel)return;
