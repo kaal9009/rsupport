@@ -651,12 +651,9 @@ function render(){
   const list=document.getElementById('list');list.innerHTML='';
   arr.forEach(c=>{
     const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
-    let th;
-    if(c.online && liveView){ th='<div class="lthumb"><div class="ov" data-ov="'+c.ip+'"><div class="spin"></div></div><img class="thumb" data-ip="'+c.ip+'"></div>'; }
-    else{ th='<div class="lthumb"><div class="ov">'+(c.online?'on':'off')+'</div></div>'; }
     const stat=c.online?'<div class="bar"><i style="width:100%"></i></div><div class="rlast">online now</div>'
                        :'<div class="bar"><i style="width:0"></i></div><div class="rlast">last seen '+timeAgo(c.lastSeen)+'</div>';
-    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+th+
+    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+
       '<div class="rmid"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+esc(c.host)+(c.online?' - '+c.ip:'')+'</div></div>'+
       '<div class="rstat">'+stat+'</div><div class="mon">&#128421;</div>';
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
