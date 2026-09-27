@@ -467,6 +467,7 @@ function panel(){
   r.innerHTML=`
    <div class="rtop"><div><div class="big">${esc(sel.name)}</div><div class="sub">${esc(sel.host)} - ${sel.ip}${sel.online?'':' - last seen '+timeAgo(sel.lastSeen)}</div></div>
      <span id="badge" class="badge ${sel.online?'on':'off'}">${sel.online?'Online':'Offline'}</span>
+     <button class="rn" id="copyIpBtn" onclick="copyIp('${sel.ip}')" title="Copy this client's Tailscale IP for RustDesk">Copy IP</button>
      <button class="rn" onclick="rename()">Rename</button></div>
    <div class="acts">
      ${btn('screen','Open screen','go')}
@@ -539,6 +540,17 @@ async function saveLock(){
   const body={ip:sel.ip,text:document.getElementById('lktext').value,color:document.getElementById('lkcolor').value,image:document.getElementById('lkimg').value};
   try{const r=await fetch('/api/lockset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   await r.json();updProg(1,1,'Saved. Now press "Lock screen".');setTimeout(hideProg,2500);}catch(e){hideProg();alert('Error: '+e);}
+}
+function copyIp(ip){
+  const b=document.getElementById('copyIpBtn');
+  const done=()=>{ if(b){ b.textContent='Copied '+ip; setTimeout(()=>{b.textContent='Copy IP';},1800); } };
+  try{ navigator.clipboard.writeText(ip).then(done,()=>fallbackCopy(ip,done)); }catch(e){ fallbackCopy(ip,done); }
+}
+function fallbackCopy(t,cb){
+  const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.focus();ta.select();
+  try{document.execCommand('copy');}catch(e){}
+  document.body.removeChild(ta);if(cb)cb();
 }
 async function rename(){
   const n=prompt('New name for this client:',sel.name);if(!n)return;
