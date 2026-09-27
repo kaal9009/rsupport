@@ -160,22 +160,32 @@ function Get-LockMode($ip) {
 #     then write WORKCOVER.flag (the user-session watcher shows the cover).
 function Start-WorkCover($ip, $mode) {
     $mode = ($mode -replace '[^a-zA-Z]','').ToLower(); if ($mode -ne 'update') { $mode = 'black' }
+    # Only do the one-time setup (add monitor + taskbar-on-all + restart explorer)
+    # if it isn't already set up this session (marker workmon.on). Otherwise just
+    # (re)apply the cover instantly - switching Black<->Update is a quick flag change.
     $ps = @"
 `$d='C:\ProgramData\RemoteSupport'
-`$vd=Join-Path `$d 'usbmmidd_v2'
-`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
-if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
-  cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null; Start-Sleep 1
-  cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null
+`$marker=Join-Path `$d 'workmon.on'
+if(-not (Test-Path `$marker)){
+  `$vd=Join-Path `$d 'usbmmidd_v2'
+  `$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
+  if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
+    cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null; Start-Sleep 1
+    cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null
+  }
+  try{
+    `$u=(Get-CimInstance Win32_ComputerSystem).UserName
+    if(`$u){ `$sid=(New-Object Security.Principal.NTAccount(`$u)).Translate([Security.Principal.SecurityIdentifier]).Value
+      `$base="Registry::HKEY_USERS\`$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+      `$cur=(Get-ItemProperty `$base -Name MMTaskbarEnabled -EA 0).MMTaskbarEnabled
+      if((Test-Path `$base) -and `$cur -ne 1){ New-ItemProperty `$base -Name MMTaskbarEnabled -Value 1 -PropertyType DWord -Force | Out-Null; Get-Process explorer -EA 0 | Stop-Process -Force -EA 0; Start-Sleep 1 } }
+  }catch{}
+  Set-Content `$marker '1' -Encoding ascii
 }
-try{
-  `$u=(Get-CimInstance Win32_ComputerSystem).UserName
-  if(`$u){ `$sid=(New-Object Security.Principal.NTAccount(`$u)).Translate([Security.Principal.SecurityIdentifier]).Value
-    `$base="Registry::HKEY_USERS\`$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-    if(Test-Path `$base){ New-ItemProperty `$base -Name MMTaskbarEnabled -Value 1 -PropertyType DWord -Force | Out-Null } }
-  Get-Process explorer -EA 0 | Stop-Process -Force -EA 0; Start-Sleep 1
-}catch{}
-Set-Content (Join-Path `$d 'WORKCOVER.flag') '$mode' -Encoding ascii
+# instant mode (re)apply: drop then rewrite so a running cover switches mode at once
+`$fl=Join-Path `$d 'WORKCOVER.flag'
+if((Test-Path `$fl) -and ((Get-Content `$fl -Raw).Trim().ToLower() -ne '$mode')){ Remove-Item `$fl -Force -EA 0; Start-Sleep -Milliseconds 350 }
+Set-Content `$fl '$mode' -Encoding ascii
 "@
     SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
     $script:workCover[$ip] = $mode
@@ -185,6 +195,7 @@ function Stop-WorkCover($ip) {
     $ps = @"
 `$d='C:\ProgramData\RemoteSupport'
 Remove-Item (Join-Path `$d 'WORKCOVER.flag') -Force -EA 0
+Remove-Item (Join-Path `$d 'workmon.on') -Force -EA 0
 `$vd=Join-Path `$d 'usbmmidd_v2'
 `$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
 if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){ cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null }
@@ -750,7 +761,7 @@ function paintWork(active){
 async function workCover(mode){
   if(!sel)return;
   const msg = mode==='off' ? ('Turning off cover + removing 2nd screen on '+sel.name+'...')
-                           : ('Setting up 2nd screen + '+mode+' cover on '+sel.name+'... (takes a few seconds)');
+                           : ('Applying '+mode+' cover on '+sel.name+'... (first time also sets up the 2nd screen)');
   showProg(0,1,msg); paintWork(mode==='off'?'off':mode);
   try{const r=await fetch('/api/workcover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,mode})});
   const j=await r.json();paintWork(j.active||'off');
