@@ -373,6 +373,18 @@ public class WLock{
  public static void Unhook(){ for(int i=0;i<8&&ShowCursor(true)<0;i++){} Bar(5); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} RequestUnlock=false;ctrl=false;alt=false; }
 }
 "@
+# One-time (per logon): show the Windows taskbar on ALL displays, so the RustDesk virtual
+# 2nd screen has its own taskbar/Start button to work with. Runs in the USER session, so
+# restarting explorer here is safe (Windows relaunches the shell); we also relaunch it
+# ourselves if it doesn't come back, to avoid a black desktop.
+try{
+  $tp='HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+  if((Get-ItemProperty $tp -Name MMTaskbarEnabled -EA 0).MMTaskbarEnabled -ne 1){
+    New-ItemProperty $tp -Name MMTaskbarEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+    Stop-Process -Name explorer -Force -EA 0; Start-Sleep 2
+    if(-not (Get-Process explorer -EA 0)){ Start-Process explorer; Start-Sleep 1 }
+  }
+}catch{}
 while($true){
   if((Test-Path $flag) -and ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalSeconds) -lt 35)){
     $mode=(Get-Content $flag -Raw).Trim().ToLower(); if($mode -ne 'update'){ $mode='black' }

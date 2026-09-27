@@ -170,34 +170,17 @@ function Get-LockMode($ip) {
 #     then write WORKCOVER.flag (the user-session watcher shows the cover).
 function Start-WorkCover($ip, $mode) {
     $mode = ($mode -replace '[^a-zA-Z]','').ToLower(); if ($mode -ne 'update') { $mode = 'black' }
-    # Only do the one-time setup (add monitor + taskbar-on-all + restart explorer)
-    # if it isn't already set up this session (marker workmon.on). Otherwise just
-    # (re)apply the cover instantly - switching Black<->Update is a quick flag change.
+    # Just show the cover: write WORKCOVER.flag, the user-session watcher does the rest
+    # (shows the cover + locks physical input). The 2nd screen comes from RustDesk's own
+    # virtual display (toolbar -> Display -> Virtual display -> +); taskbar-on-all-displays
+    # is handled safely by the watcher at logon. Nothing heavy or blocking here.
     $ps = @"
-`$d='C:\ProgramData\RemoteSupport'
-`$marker=Join-Path `$d 'workmon.on'
-# NOTE: the 2nd screen now comes from RustDesk's OWN virtual display (toolbar -> Display ->
-# Virtual display -> +). We no longer touch usbmmidd here because it conflicts with RustDesk's
-# virtual display driver. This function only shows the cover + locks physical input; the
-# taskbar-on-all-displays (below, gated by the marker) still gives that RustDesk screen a taskbar.
-# One-time heavy setup (taskbar on all displays + explorer restart) stays gated by the marker.
-if(-not (Test-Path `$marker)){
-  try{
-    `$u=(Get-CimInstance Win32_ComputerSystem).UserName
-    if(`$u){ `$sid=(New-Object Security.Principal.NTAccount(`$u)).Translate([Security.Principal.SecurityIdentifier]).Value
-      `$base="Registry::HKEY_USERS\`$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-      `$cur=(Get-ItemProperty `$base -Name MMTaskbarEnabled -EA 0).MMTaskbarEnabled
-      if((Test-Path `$base) -and `$cur -ne 1){ New-ItemProperty `$base -Name MMTaskbarEnabled -Value 1 -PropertyType DWord -Force | Out-Null; Get-Process explorer -EA 0 | Stop-Process -Force -EA 0; Start-Sleep 1 } }
-  }catch{}
-  Set-Content `$marker '1' -Encoding ascii
-}
-# instant mode (re)apply: drop then rewrite so a running cover switches mode at once
-`$fl=Join-Path `$d 'WORKCOVER.flag'
+`$fl='C:\ProgramData\RemoteSupport\WORKCOVER.flag'
+`$d=Split-Path `$fl; if(-not(Test-Path `$d)){New-Item -ItemType Directory -Path `$d -Force|Out-Null}
 if((Test-Path `$fl) -and ((Get-Content `$fl -Raw).Trim().ToLower() -ne '$mode')){ Remove-Item `$fl -Force -EA 0; Start-Sleep -Milliseconds 350 }
 Set-Content `$fl '$mode' -Encoding ascii
 "@
-    # Fire-and-forget: the monitor-add + taskbar setup runs on the client in the background,
-    # so the dashboard never freezes waiting for it.
+    # Fire-and-forget: instant, dashboard never blocks.
     SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     $script:workCover[$ip] = $mode
     return $mode
