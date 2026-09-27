@@ -415,12 +415,23 @@ function Blocked-All {
 
 $script:lockedClients = @{}
 $script:workCover = @{}
+# clients under a "fake-off + restart in 5 min": keep the black cover fresh only until
+# this time, then stop (so the PC reboots clean and doesn't get re-covered after restart).
+$script:deadUntil = @{}
 function Save-LockState { }
 # Keep each locked client's flag FRESH. The front-end pings /api/heartbeat every 3s, so
 # this refreshes the flag well within the client's 30s freshness window. When the dashboard
 # window is closed (or crashes / loses power), these pings stop, the flag goes stale, and
 # every client drops its update screen on its own within ~30s. That's the auto-off on close.
 function Heartbeat {
+    # A "fake-off" client stops being refreshed once its restart time passes, so it
+    # boots clean instead of getting re-covered when it comes back online.
+    foreach ($ip in @($script:deadUntil.Keys)) {
+        if ((Get-Date) -gt $script:deadUntil[$ip]) {
+            $script:deadUntil.Remove($ip)
+            $script:lockedClients.Remove($ip)
+        }
+    }
     foreach ($ip in @($script:lockedClients.Keys)) {
         $u = Login-For $ip
         Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip",'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
@@ -472,8 +483,33 @@ function Do-Action($ip, $action) {
         'restart'  { SSH-Run $ip 'shutdown /r /t 0' | Out-Null; return "Restart sent." }
         'shutdown' { SSH-Run $ip 'shutdown /s /t 0' | Out-Null; return "Shutdown sent." }
         'stoprestart' {
-            $r = SSH-Run $ip 'cmd /c "shutdown /a & shutdown /r /t 300 /f /c \"This PC will restart in 5 minutes.\""'
-            return "Pending shutdown cancelled. PC will restart in 5 min instead. (Only works if the shutdown was still counting down / not fully committed.)"
+            # "Fake shutdown -> restart in 5 min". Time-critical, so everything is
+            # fire-and-forget (never wait for an SSH reply).
+            #  1) cancel the running shutdown AND schedule a restart 5 min later, in ONE
+            #     remote command so the order is guaranteed (/a before /r). Sent twice.
+            #  2) instantly flip the client to a pure-black "off" cover (LOCK_MODE=off) and
+            #     drop LOCK.flag in the SAME shot, so the screen looks powered off within
+            #     a couple of seconds - silent, no visible desktop/toast.
+            #  3) keep that black cover fresh (heartbeat) only until just before the restart,
+            #     then stop, so the PC reboots clean.
+            $u = Login-For $ip
+            $sshOpts = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=4')
+            $rc = 'shutdown /a & shutdown /r /t 300 /f'
+            1..2 | ForEach-Object {
+                Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", $rc)) -ErrorAction SilentlyContinue
+            }
+            $blackPs = @'
+$f='C:\ProgramData\RemoteSupport\config.txt'
+$d=Split-Path $f; if(-not(Test-Path $d)){New-Item -ItemType Directory -Path $d -Force|Out-Null}
+$k=@(); if(Test-Path $f){$k=@(Get-Content $f | Where-Object {$_ -notmatch '^LOCK_MODE=' -and $_.Trim() -ne ''})}
+$k+='LOCK_MODE=off'
+Set-Content -Path $f -Value $k -Encoding ascii
+Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding ascii
+'@
+            Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", ('powershell -NoProfile -EncodedCommand ' + (Enc $blackPs)))) -ErrorAction SilentlyContinue
+            $script:lockedClients[$ip] = $true
+            $script:deadUntil[$ip] = (Get-Date).AddSeconds(320)
+            return "Done - shutdown cancelled, screen going black now, PC restarts in ~5 min."
         }
         'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
         'who'      { return (SSH-Run $ip 'query user') }
@@ -695,7 +731,7 @@ function panel(){
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
-     <button class="act" onclick="stopRestart()" title="If the client is shutting down, cancel it and restart the PC in 5 minutes instead">Stop shutdown &rarr; restart in 5 min</button>
+     <button class="act" onclick="stopRestart()" title="If the client is shutting down: cancel it silently, black out the screen so it looks powered off, then auto-restart in 5 min">Fake shutdown (black) &rarr; restart 5 min</button>
    </div>
    <div id="out">Ready.</div>
    <div class="lockbox" style="border-color:#3a4a72">
@@ -722,13 +758,11 @@ async function act(a){
   else if(a==='unlock'){updProg(1,1,'Unlocked - client screen released.');setTimeout(hideProg,2500);setTimeout(checkLock,1500);}
   if(o)o.textContent=j.output||'(no output)';}catch(e){hideProg();if(o)o.textContent='Error: '+e;}
 }
-async function stopRestart(){
+function stopRestart(){
   if(!sel)return;
   const o=document.getElementById('out');
-  if(!confirm(sel.name+': cancel any running shutdown and restart this PC in 5 minutes?'))return;
-  if(o)o.textContent='Sending...';
-  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoprestart'})});
-  const j=await r.json();if(o)o.textContent=j.output||'(no output)';}catch(e){if(o)o.textContent='Error: '+e;}
+  if(o)o.textContent='Fired to '+sel.name+': shutdown cancelled, screen going black (looks off), auto-restart in ~5 min.';
+  fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoprestart'})}).catch(()=>{});
 }
 async function checkLock(){
   const el=document.getElementById('lockStatus');if(!el||!sel)return;

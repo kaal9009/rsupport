@@ -198,7 +198,7 @@ while($true){
     $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
     # mode: blue = real Windows Update blue, black = black. Falls back to LOCK_COLOR if set to a custom hex.
     $mode=(Cfg 'LOCK_MODE' 'black').Trim().ToLower()
-    if($mode -eq 'blue'){ $bg='#006dae' } elseif($mode -eq 'black'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
+    if($mode -eq 'blue'){ $bg='#006dae' } elseif($mode -eq 'black' -or $mode -eq 'off'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
     $html=@"
 <!-- saved from url=(0014)about:internet -->
 <!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><style>
@@ -246,6 +246,9 @@ function step(){
 setTimeout(step,1500);
 </script></body></html>
 "@
+    # "off" mode = totally black, empty, no cursor/text/spinner -> looks like the monitor
+    # is powered off. Used by the dashboard "fake shutdown" button.
+    if($mode -eq 'off'){ $html='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100%;background:#000;overflow:hidden;cursor:none"></body></html>' }
     # Unique filename each time so the IE WebBrowser control can't show a cached old copy
     # (that was making Black re-open in the previous Blue, etc). Clean up older ones first.
     Get-ChildItem $dir -Filter 'lock_*.html' -EA 0 | Remove-Item -Force -EA 0
