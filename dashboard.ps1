@@ -493,16 +493,20 @@ body{background:#0f1420;color:#e6eaf2;display:flex;height:100vh;overflow:hidden}
 .rbtn{font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:4px 9px;border-radius:6px;cursor:pointer}
 .rbtn:hover{background:#22304e}
 #search{width:100%;margin-top:10px;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-#list{flex:1;overflow-y:auto}
-.row{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:11px 16px;cursor:pointer;border-bottom:1px solid #1d2537}
-.row:hover{background:#1c2438}
-.row.sel{background:#233152}
-.rowtop{display:flex;align-items:center;gap:10px}
+#list{flex:1;overflow-y:auto;padding:12px}
+.row{display:flex;flex-direction:column;align-items:stretch;cursor:pointer;border:1px solid #263148;border-radius:10px;overflow:hidden;background:#141b2b;margin-bottom:12px;transition:border-color .15s,transform .05s}
+.row:hover{border-color:#3a4a72}
+.row.sel{border-color:#4a7bd0;box-shadow:0 0 0 1px #4a7bd0}
+.thumbwrap{position:relative;width:100%;aspect-ratio:16/9;background:#0a0d16;overflow:hidden}
+.thumb{width:100%;height:100%;object-fit:cover;display:block}
+.thumbov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#5f6d88;background:#0a0d16;gap:8px}
+.spin{width:16px;height:16px;border:2px solid #2c3752;border-top-color:#6f86c0;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.cardfoot{display:flex;align-items:center;gap:9px;padding:9px 12px}
 .dot{width:9px;height:9px;border-radius:50%;flex:none}
-.on{background:#38d16a}.off{background:#5a6577}
-.rname{font-size:13.5px;color:#eef2f8}
+.on{background:#38d16a;box-shadow:0 0 6px #38d16a}.off{background:#5a6577}
+.rname{font-size:13.5px;color:#eef2f8;font-weight:500}
 .rhost{font-size:11px;color:#7d8aa5}
-.thumb{width:100%;border-radius:6px;background:#000;display:block;aspect-ratio:16/9;object-fit:cover;border:1px solid #263148}
 #right{flex:1;display:flex;flex-direction:column;overflow-y:auto}
 .rtop{padding:16px 20px;border-bottom:1px solid #263148;display:flex;align-items:center;gap:12px}
 .rtop .big{font-size:17px;font-weight:600;color:#fff}
@@ -550,7 +554,10 @@ async function updateThumbs(){
     for(const im of imgs){
       const ip=im.dataset.ip;if(!ip)continue;
       try{const r=await fetch('/api/thumb?ip='+ip,{cache:'no-store'});const j=await r.json();
-        if(j.img&&j.img.length>100){im.src='data:image/jpeg;base64,'+j.img;}}catch(e){}
+        if(j.img&&j.img.length>100){
+          im.src='data:image/jpeg;base64,'+j.img;
+          const ov=document.querySelector('.thumbov[data-ov="'+ip+'"]');if(ov)ov.style.display='none';
+        }}catch(e){}
     }
   }finally{thumbBusy=false;}
 }
@@ -563,8 +570,15 @@ function render(){
   clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q)).forEach(c=>{
     const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
     const seenLine=c.online?(esc(c.host)+' - '+c.ip):(esc(c.host)+' - last seen '+timeAgo(c.lastSeen));
-    let inner='<div class="rowtop"><span class="dot '+(c.online?'on':'off')+'"></span><div><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div></div>';
-    if(c.online && liveView){ inner+='<img class="thumb" data-ip="'+c.ip+'" alt="loading...">'; }
+    let inner='';
+    if(c.online){
+      const ov = liveView ? '<div class="thumbov" data-ov="'+c.ip+'"><div class="spin"></div>Connecting...</div>'
+                          : '<div class="thumbov">Live view off</div>';
+      inner+='<div class="thumbwrap">'+ov+(liveView?'<img class="thumb" data-ip="'+c.ip+'">':'')+'</div>';
+    } else {
+      inner+='<div class="thumbwrap"><div class="thumbov">Offline</div></div>';
+    }
+    inner+='<div class="cardfoot"><span class="dot '+(c.online?'on':'off')+'"></span><div style="flex:1;min-width:0"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div></div>';
     d.innerHTML=inner;
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
   });
