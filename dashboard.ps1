@@ -154,6 +154,52 @@ function Get-LockMode($ip) {
     return $mode
 }
 
+# ---- Work-behind cover: client's real screen shows black/update + physical input
+# locked, while you work on a virtual 2nd monitor via RustDesk/AnyDesk. ----
+# ON: add ONE virtual monitor, taskbar on all displays for the logged-in user,
+#     then write WORKCOVER.flag (the user-session watcher shows the cover).
+function Start-WorkCover($ip, $mode) {
+    $mode = ($mode -replace '[^a-zA-Z]','').ToLower(); if ($mode -ne 'update') { $mode = 'black' }
+    $ps = @"
+`$d='C:\ProgramData\RemoteSupport'
+`$vd=Join-Path `$d 'usbmmidd_v2'
+`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
+if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
+  cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null; Start-Sleep 1
+  cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null
+}
+try{
+  `$u=(Get-CimInstance Win32_ComputerSystem).UserName
+  if(`$u){ `$sid=(New-Object Security.Principal.NTAccount(`$u)).Translate([Security.Principal.SecurityIdentifier]).Value
+    `$base="Registry::HKEY_USERS\`$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+    if(Test-Path `$base){ New-ItemProperty `$base -Name MMTaskbarEnabled -Value 1 -PropertyType DWord -Force | Out-Null } }
+  Get-Process explorer -EA 0 | Stop-Process -Force -EA 0; Start-Sleep 1
+}catch{}
+Set-Content (Join-Path `$d 'WORKCOVER.flag') '$mode' -Encoding ascii
+"@
+    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
+    $script:workCover[$ip] = $mode
+    return $mode
+}
+function Stop-WorkCover($ip) {
+    $ps = @"
+`$d='C:\ProgramData\RemoteSupport'
+Remove-Item (Join-Path `$d 'WORKCOVER.flag') -Force -EA 0
+`$vd=Join-Path `$d 'usbmmidd_v2'
+`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
+if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){ cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null }
+"@
+    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
+    $script:workCover.Remove($ip)
+    return 'off'
+}
+function Get-WorkCover($ip) {
+    $r = SSH-Run $ip 'powershell -NoProfile -Command "$f=''C:\ProgramData\RemoteSupport\WORKCOVER.flag''; if(Test-Path $f){(Get-Content $f -Raw).Trim()}else{''off''}"'
+    $m = ($r | Out-String).Trim().ToLower()
+    if ($m -ne 'update' -and $m -ne 'black') { $m = 'off' }
+    return $m
+}
+
 function Set-AutoLogin($ip, $pass) {
     $cu = (SSH-Run $ip 'powershell -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).UserName"').Trim()
     if (-not $cu) { return "Could not detect the logged-in user. Make sure someone is logged in on that PC." }
@@ -336,6 +382,7 @@ function Blocked-All {
 }
 
 $script:lockedClients = @{}
+$script:workCover = @{}
 function Save-LockState { }
 # Keep each locked client's flag FRESH. The front-end pings /api/heartbeat every 3s, so
 # this refreshes the flag well within the client's 30s freshness window. When the dashboard
@@ -349,11 +396,15 @@ function Heartbeat {
     return $script:lockedClients.Count
 }
 # Called when the dashboard is closing: proactively drop every fake-update screen now
-# (instant), rather than waiting for the 30s staleness timeout.
+# (instant), rather than waiting for the 30s staleness timeout. Also clears any
+# work-behind covers so no client is left covered.
 function Unlock-All {
     foreach ($ip in @($script:lockedClients.Keys)) {
         $u = Login-For $ip
         Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip",'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
+    }
+    foreach ($ip in @($script:workCover.Keys)) {
+        try { Stop-WorkCover $ip | Out-Null } catch {}
     }
     $script:lockedClients.Clear()
 }
@@ -483,6 +534,17 @@ function panel(){
      ${btn('shutdown','Shutdown','danger')}
    </div>
    <div id="out">Ready.</div>
+   <div class="lockbox" style="border-color:#3a4a72">
+     <h3>Work behind cover (you work while client sees a cover)</h3>
+     <div style="font-size:11px;color:#7d8aa5;margin:-6px 0 12px">Adds a hidden 2nd screen. Client's real screen shows black/update + their mouse/keyboard locked; you connect with RustDesk/AnyDesk, switch to monitor 2, and work normally.</div>
+     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+       <button type="button" id="wcBlack" onclick="workCover('black')" style="padding:8px 16px;border-radius:7px;border:1px solid #555;background:#000;color:#fff;font-size:12.5px;cursor:pointer">Black ON</button>
+       <button type="button" id="wcUpdate" onclick="workCover('update')" style="padding:8px 16px;border-radius:7px;border:1px solid #2a6bb0;background:#0067b8;color:#fff;font-size:12.5px;cursor:pointer">Update ON</button>
+       <button type="button" id="wcOff" onclick="workCover('off')" style="padding:8px 16px;border-radius:7px;border:1px solid #7a3a42;background:#3a2226;color:#e0868f;font-size:12.5px;cursor:pointer">OFF</button>
+       <span id="wcBadge" style="margin-left:4px;font-size:12px;padding:5px 12px;border-radius:20px;background:#2b3550;color:#9fb0d0">Off</span>
+     </div>
+     <div class="hint">Turning OFF also removes the 2nd screen. Backup on the client: Ctrl+Alt+U. Closing this dashboard turns every cover off.</div>
+   </div>
    <div class="lockbox">
      <h3>Lock screen settings for this client</h3>
      <div id="lockStatus" style="display:inline-block;font-size:12px;padding:5px 12px;border-radius:20px;background:#33262a;color:#e0868f;margin-bottom:14px">Checking lock status...</div>
@@ -506,7 +568,7 @@ function panel(){
      <button class="savebtn" onclick="saveLock()">Save lock settings</button>
      <div class="hint">Leave blank to use defaults (navy + "Maintenance in progress"). Image must be a direct link ending in .png/.jpg.</div>
    </div>`;
-  loadLock();
+  loadLock();checkWork();
 }
 function btn(a,label,cls){return `<button class="act ${cls}" onclick="act('${a}')">${label}</button>`;}
 async function act(a){
@@ -700,6 +762,31 @@ async function toggleMode(mode){
   updProg(1,1, target==='off' ? 'Update screen turned off.' : (target+' update screen is now showing.'));
   setTimeout(hideProg,2200);setTimeout(checkLock,1500);}catch(e){hideProg();paintMode(curMode);}
 }
+let wcMode='off';
+function paintWork(active){
+  wcMode=active;
+  const bl=document.getElementById('wcBlack'),up=document.getElementById('wcUpdate'),bad=document.getElementById('wcBadge');
+  if(!bl||!up||!bad)return;
+  bl.style.outline=(active==='black')?'2px solid #999':'none';
+  up.style.outline=(active==='update')?'2px solid #7fbfff':'none';
+  if(active==='black'){bad.textContent='Black cover ON';bad.style.background='#2a2a2a';bad.style.color='#e6e6e6';}
+  else if(active==='update'){bad.textContent='Update cover ON';bad.style.background='#123a5a';bad.style.color='#8fd0ff';}
+  else{bad.textContent='Off';bad.style.background='#2b3550';bad.style.color='#9fb0d0';}
+}
+async function workCover(mode){
+  if(!sel)return;
+  const msg = mode==='off' ? ('Turning off cover + removing 2nd screen on '+sel.name+'...')
+                           : ('Setting up 2nd screen + '+mode+' cover on '+sel.name+'... (takes a few seconds)');
+  showProg(0,1,msg); paintWork(mode==='off'?'off':mode);
+  try{const r=await fetch('/api/workcover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,mode})});
+  const j=await r.json();paintWork(j.active||'off');
+  updProg(1,1, mode==='off' ? 'Cover off, 2nd screen removed.' : (mode+' cover on. Connect with RustDesk/AnyDesk and switch to monitor 2.'));
+  setTimeout(hideProg,3000);}catch(e){hideProg();}
+}
+async function checkWork(){
+  if(!sel||!document.getElementById('wcBadge'))return;
+  try{const r=await fetch('/api/workcoverget?ip='+sel.ip);paintWork((await r.json()).active||'off');}catch(e){}
+}
 let deadHits=0;
 async function ping(){
   try{await fetch('/api/heartbeat',{cache:'no-store'});deadHits=0;}
@@ -725,7 +812,7 @@ function timeAgo(iso){
   if(s<86400)return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('lockStatus'))checkLock();},5000);
+load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('lockStatus')){checkLock();checkWork();}},5000);
 </script></body></html>
 '@
 
@@ -820,6 +907,17 @@ while ($true) {
             $st = (Lock-Status $ip)
             $active = if ($st -eq 'locked') { (Get-LockMode $ip) } else { 'off' }
             Send $ctx (@{ active = $active; status = $st } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/workcover') {
+            # body: {ip, mode:'black'|'update'|'off'}
+            $b = Body $ctx
+            if ($b.mode -eq 'off') { $a = (Stop-WorkCover $b.ip) }
+            else { $a = (Start-WorkCover $b.ip $b.mode) }
+            Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/workcoverget') {
+            $ip = $ctx.Request.QueryString['ip']
+            Send $ctx (@{ active = (Get-WorkCover $ip) } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/rename') {
             $b = Body $ctx; Save-Name $b.host $b.name; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'

