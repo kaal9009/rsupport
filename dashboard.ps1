@@ -483,64 +483,95 @@ $html = @'
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>My Remote Dashboard</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:Segoe UI,Arial,sans-serif}
-body{background:#0f1420;color:#e6eaf2;display:flex;height:100vh;overflow:hidden}
-#left{width:320px;background:#161d2e;border-right:1px solid #263148;display:flex;flex-direction:column}
-.top{padding:14px 16px;border-bottom:1px solid #263148}
-.top h1{font-size:15px;font-weight:600;color:#fff}
-.rowflex{display:flex;align-items:center;gap:8px;margin-top:4px}
-.top p{font-size:12px;color:#7d8aa5}
-.rbtn{font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:4px 9px;border-radius:6px;cursor:pointer}
-.rbtn:hover{background:#22304e}
-#search{width:100%;margin-top:10px;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-#list{flex:1;overflow-y:auto}
-.row{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid #1c2436}
-.row:hover{background:#1a2234}
-.row.sel{background:#1e2b46}
+*{box-sizing:border-box;margin:0;padding:0;font-family:"Segoe UI",Roboto,Arial,sans-serif}
+body{background:#eef1f5;color:#2a2f3a;display:flex;height:100vh;overflow:hidden;font-size:13px}
+#groups{width:212px;background:#fff;border-right:1px solid #e2e6ee;display:flex;flex-direction:column;flex:none}
+.gh{padding:14px 16px;border-bottom:1px solid #eef1f5}
+.gh h1{font-size:15px;font-weight:700;color:#1f2a3a}
+.gbtn{display:block;width:calc(100% - 24px);margin:10px 12px 0;padding:9px;border:0;border-radius:6px;background:#2f6fed;color:#fff;font-size:13px;font-weight:600;cursor:pointer}
+.gbtn:hover{background:#255fd0}
+.gtools{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-bottom:1px solid #eef1f5}
+.tbtn{font-size:11.5px;color:#5a6472;background:#f2f5fa;border:1px solid #dfe4ee;padding:5px 9px;border-radius:6px;cursor:pointer}
+.tbtn:hover{background:#e7edf7}
+.grouplist{flex:1;overflow:auto;padding:6px 0}
+.glabel{padding:8px 16px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#98a1b1}
+.grp{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;font-size:13px;color:#2a2f3a;cursor:pointer}
+.grp:hover{background:#f2f5fa}
+.grp.act{background:#e8effd;color:#2f6fed;font-weight:600;border-left:3px solid #2f6fed;padding-left:13px}
+.grp .n{color:#98a1b1;font-size:12px}
+#center{flex:1;display:flex;flex-direction:column;min-width:0;background:#fff;border-right:1px solid #e2e6ee}
+.chead{padding:12px 18px;border-bottom:1px solid #eef1f5;display:flex;align-items:center;gap:12px}
+.chead h2{font-size:15px;font-weight:600;color:#1f2a3a}
+.chead .cnt{font-size:12px;color:#8a93a3}
+.grow{flex:1}
+#search{padding:7px 11px;border:1px solid #dfe4ee;border-radius:7px;background:#f7f9fc;font-size:13px;width:210px}
+#list{flex:1;overflow:auto}
+.row{display:flex;align-items:center;gap:12px;padding:10px 18px;cursor:pointer;border-bottom:1px solid #eef1f5}
+.row:hover{background:#f5f8fd}
+.row.sel{background:#e8effd}
 .dot{width:9px;height:9px;border-radius:50%;flex:none}
-.on{background:#38d16a;box-shadow:0 0 6px #38d16a}.off{background:#5a6577}
-.lthumb{width:56px;height:33px;border-radius:5px;background:#0a0d16;border:1px solid #263148;overflow:hidden;position:relative;flex:none}
+.on{background:#46b556}.off{background:#c2c9d4}
+.lthumb{width:66px;height:39px;border-radius:5px;background:#0a0d16;border:1px solid #d7dde6;overflow:hidden;position:relative;flex:none}
 .lthumb img{width:100%;height:100%;object-fit:cover;display:block}
-.lthumb .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#5f6d88}
-.spin{width:14px;height:14px;border:2px solid #2c3752;border-top-color:#6f86c0;border-radius:50%;animation:sp 1s linear infinite}
+.lthumb .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#8a93a3;background:#0a0d16}
+.spin{width:14px;height:14px;border:2px solid #3a4657;border-top-color:#9db6e6;border-radius:50%;animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-.rname{font-size:13.5px;color:#eef2f8;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rhost{font-size:11px;color:#7d8aa5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.preview{position:relative;margin:16px 20px 4px;border:1px solid #263148;border-radius:10px;overflow:hidden;aspect-ratio:16/9;background:#0a0d16}
+.rmid{flex:1;min-width:0}
+.rname{font-size:13.5px;color:#1f2a3a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rhost{font-size:11.5px;color:#8a93a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rstat{width:140px;flex:none}
+.bar{height:6px;border-radius:4px;background:#e4e8ef;overflow:hidden;margin-bottom:4px}
+.bar>i{display:block;height:100%;background:#46b556}
+.rlast{font-size:11px;color:#8a93a3;text-align:right}
+.mon{width:22px;flex:none;color:#9aa4b4;text-align:center;font-size:16px}
+#right{width:342px;flex:none;display:flex;flex-direction:column;overflow:auto;background:#fafbfd}
+#empty{flex:1;display:flex;align-items:center;justify-content:center;color:#98a1b1;font-size:14px;padding:20px;text-align:center}
+.rtop{padding:16px 18px;border-bottom:1px solid #eef1f5}
+.rtop .big{font-size:17px;font-weight:700;color:#1f2a3a}
+.rtop .sub{font-size:12px;color:#8a93a3;margin-top:3px}
+.badge{display:inline-block;margin-top:9px;font-size:11px;padding:3px 10px;border-radius:20px}
+.badge.on{background:#e4f6e8;color:#2e8b40}.badge.off{background:#fdeaea;color:#c0504a}
+.preview{position:relative;margin:14px 18px 4px;border:1px solid #d7dde6;border-radius:8px;overflow:hidden;aspect-ratio:16/9;background:#0a0d16}
 .preview img{width:100%;height:100%;object-fit:cover;display:block}
-.preview .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#5f6d88}
-#right{flex:1;display:flex;flex-direction:column;overflow-y:auto}
-.rtop{padding:16px 20px;border-bottom:1px solid #263148;display:flex;align-items:center;gap:12px}
-.rtop .big{font-size:17px;font-weight:600;color:#fff}
-.rtop .sub{font-size:12px;color:#7d8aa5}
-.badge{font-size:11px;padding:3px 9px;border-radius:20px}
-.badge.on{background:#123a22;color:#5fe08a}.badge.off{background:#33262a;color:#e0868f}
-.acts{padding:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-button.act{padding:14px;border-radius:9px;border:1px solid #2c3752;background:#1a2236;color:#e6eaf2;font-size:14px;cursor:pointer;text-align:left}
-button.act:hover{background:#243050;border-color:#3a4a72}
-button.act.danger:hover{background:#3a2226;border-color:#7a3a42}
-button.act.go{background:#1c3a6b;border-color:#295596}
-button.act.go:hover{background:#245089}
-#out{margin:0 20px 12px;padding:14px;background:#0c1120;border:1px solid #263148;border-radius:8px;font-family:Consolas,monospace;font-size:12.5px;color:#a9d6b6;white-space:pre-wrap;min-height:40px;max-height:180px;overflow:auto}
-.lockbox{margin:0 20px 24px;padding:16px;background:#141b2b;border:1px solid #263148;border-radius:10px}
-.lockbox h3{font-size:14px;color:#dfe6f2;margin-bottom:12px}
-.fld{margin-bottom:12px}
-.fld label{display:block;font-size:12px;color:#8fa0c0;margin-bottom:5px}
-.fld input[type=text],.fld input[type=url]{width:100%;padding:9px 11px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-.fld input[type=color]{width:52px;height:34px;border:1px solid #2c3752;background:#0f1420;border-radius:6px;cursor:pointer;vertical-align:middle}
-.savebtn{margin-top:4px;padding:10px 18px;border-radius:7px;border:1px solid #295596;background:#1c3a6b;color:#fff;font-size:13px;cursor:pointer}
-.savebtn:hover{background:#245089}
-.hint{font-size:11px;color:#6f7ea0;margin-top:6px}
-#empty{flex:1;display:flex;align-items:center;justify-content:center;color:#5a6577;font-size:14px}
-.rn{margin-left:auto;font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:5px 10px;border-radius:6px;cursor:pointer}
+.preview .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#8a93a3;background:#0a0d16}
+.acts{padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:9px}
+button.act{padding:11px;border-radius:7px;border:1px solid #dfe4ee;background:#f5f8fd;color:#2a2f3a;font-size:13px;cursor:pointer;text-align:left}
+button.act:hover{background:#e9f0fb;border-color:#b9c8e6}
+button.act.danger:hover{background:#fdeaea;border-color:#e6a8a2}
+button.act.go{background:#2f6fed;border-color:#2f6fed;color:#fff}
+button.act.go:hover{background:#255fd0}
+#out{margin:0 18px 12px;padding:11px;background:#f2f5fa;border:1px solid #e2e6ee;border-radius:7px;font-family:Consolas,monospace;font-size:12px;color:#3a6b48;white-space:pre-wrap;min-height:36px;max-height:160px;overflow:auto}
+.lockbox{margin:0 18px 18px;padding:14px;background:#fff;border:1px solid #e2e6ee;border-radius:9px}
+.lockbox h3{font-size:13.5px;color:#1f2a3a;margin-bottom:10px}
+.fld{margin-bottom:10px}
+.fld label{display:block;font-size:12px;color:#6a7385;margin-bottom:5px}
+.fld input[type=text],.fld input[type=url],.fld input[type=color]{width:100%;padding:8px 10px;border-radius:6px;border:1px solid #dfe4ee;background:#f7f9fc;color:#2a2f3a;font-size:13px}
+.fld input[type=color]{width:52px;height:34px;padding:2px}
+.savebtn{margin-top:4px;padding:9px 16px;border-radius:7px;border:1px solid #2f6fed;background:#2f6fed;color:#fff;font-size:13px;cursor:pointer}
+.hint{font-size:11px;color:#98a1b1;margin-top:6px}
+.rn{font-size:12px;color:#2f6fed;background:#fff;border:1px solid #cdd8ee;padding:5px 10px;border-radius:6px;cursor:pointer;margin-top:8px;margin-right:6px}
+.rbtn{font-size:12px;color:#5a6472;background:#f2f5fa;border:1px solid #dfe4ee;padding:4px 9px;border-radius:6px;cursor:pointer}
 </style></head><body>
-<div id="left">
-  <div class="top"><h1>My Remote Dashboard</h1>
-    <div class="rowflex"><p id="count">Loading...</p><button class="rbtn" onclick="load()">Refresh</button><button id="upBtn" class="rbtn" style="border-color:#295596;color:#9dc3ff;" onclick="upgradeAll()">Upgrade all</button><button class="rbtn" style="border-color:#2e7d46;color:#8fe0a8;" onclick="newClient()">+ New client</button><button id="lvBtn" class="rbtn" style="border-color:#6a4ea0;color:#c6b0ff;" onclick="toggleLive()">Live: ON</button></div>
-    <input id="search" placeholder="Search clients..." oninput="render()"></div>
+<div id="groups">
+  <div class="gh"><h1>My Remote</h1></div>
+  <button class="gbtn" onclick="newClient()">+ New client</button>
+  <div class="gtools">
+    <button class="tbtn" onclick="load()">Refresh</button>
+    <button class="tbtn" id="upBtn" onclick="upgradeAll()">Upgrade all</button>
+    <button class="tbtn" id="lvBtn" onclick="toggleLive()">Live: ON</button>
+  </div>
+  <div class="grouplist">
+    <div class="glabel">Session Groups</div>
+    <div class="grp act" data-g="all" onclick="setGroup('all')"><span>All Machines</span><span class="n" id="cAll">0</span></div>
+    <div class="grp" data-g="online" onclick="setGroup('online')"><span>Online</span><span class="n" id="cOn">0</span></div>
+    <div class="grp" data-g="offline" onclick="setGroup('offline')"><span>Offline</span><span class="n" id="cOff">0</span></div>
+  </div>
+</div>
+<div id="center">
+  <div class="chead"><h2 id="grpTitle">All Machines</h2><span class="cnt" id="count"></span><div class="grow"></div><input id="search" placeholder="Search machines..." oninput="render()"></div>
   <div id="list"></div>
 </div>
-<div id="right"><div id="empty">Select a client from the left</div></div>
+<div id="right"><div id="empty">Select a machine from the list</div></div>
 <script>
 let clients=[],sel=null,liveView=true,thumbBusy=false;
 function toggleLive(){
@@ -564,19 +595,34 @@ async function updateThumbs(){
   }finally{thumbBusy=false;}
 }
 async function load(){try{const r=await fetch('/api/clients');clients=await r.json();}catch(e){}render();syncBadge();}
+let curGroup='all';
+function setGroup(g){
+  curGroup=g;
+  document.querySelectorAll('.grp').forEach(x=>x.classList.toggle('act',x.dataset.g===g));
+  document.getElementById('grpTitle').textContent=g==='online'?'Online':(g==='offline'?'Offline':'All Machines');
+  render();
+}
 function render(){
   const q=(document.getElementById('search').value||'').toLowerCase();
   const on=clients.filter(c=>c.online).length;
-  document.getElementById('count').textContent=clients.length+' clients - '+on+' online';
+  document.getElementById('cAll').textContent=clients.length;
+  document.getElementById('cOn').textContent=on;
+  document.getElementById('cOff').textContent=clients.length-on;
+  let arr=clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q));
+  if(curGroup==='online')arr=arr.filter(c=>c.online);
+  if(curGroup==='offline')arr=arr.filter(c=>!c.online);
+  document.getElementById('count').textContent=arr.length+' machines';
   const list=document.getElementById('list');list.innerHTML='';
-  clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q)).forEach(c=>{
+  arr.forEach(c=>{
     const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
-    const seenLine=c.online?(esc(c.host)+' - '+c.ip):(esc(c.host)+' - last seen '+timeAgo(c.lastSeen));
     let th;
     if(c.online && liveView){ th='<div class="lthumb"><div class="ov" data-ov="'+c.ip+'"><div class="spin"></div></div><img class="thumb" data-ip="'+c.ip+'"></div>'; }
-    else if(c.online){ th='<div class="lthumb"><div class="ov">on</div></div>'; }
-    else { th='<div class="lthumb"><div class="ov">off</div></div>'; }
-    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+th+'<div style="flex:1;min-width:0"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div>';
+    else{ th='<div class="lthumb"><div class="ov">'+(c.online?'on':'off')+'</div></div>'; }
+    const stat=c.online?'<div class="bar"><i style="width:100%"></i></div><div class="rlast">online now</div>'
+                       :'<div class="bar"><i style="width:0"></i></div><div class="rlast">last seen '+timeAgo(c.lastSeen)+'</div>';
+    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+th+
+      '<div class="rmid"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+esc(c.host)+(c.online?' • '+c.ip:'')+'</div></div>'+
+      '<div class="rstat">'+stat+'</div><div class="mon">&#128421;</div>';
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
   });
 }
