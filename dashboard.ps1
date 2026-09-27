@@ -522,10 +522,7 @@ function panel(){
      <button class="rn" onclick="rename()">Rename</button></div>
    <div class="acts">
      ${btn('screen','Open screen','go')}
-     ${btn('privacy','Privacy screen (I work)','go')}
      ${btn('terminal','Terminal','')}
-     ${btn('lock','Lock screen','go')}
-     ${btn('unlock','Unlock','')}
      ${btn('health','Health / specs','')}
      ${btn('who','Who is logged in','')}
      <button class="act" onclick="autoLogin()">Auto-login (no password)</button>
@@ -544,31 +541,8 @@ function panel(){
        <span id="wcBadge" style="margin-left:4px;font-size:12px;padding:5px 12px;border-radius:20px;background:#2b3550;color:#9fb0d0">Off</span>
      </div>
      <div class="hint">Turning OFF also removes the 2nd screen. Backup on the client: Ctrl+Alt+U. Closing this dashboard turns every cover off.</div>
-   </div>
-   <div class="lockbox">
-     <h3>Lock screen settings for this client</h3>
-     <div id="lockStatus" style="display:inline-block;font-size:12px;padding:5px 12px;border-radius:20px;background:#33262a;color:#e0868f;margin-bottom:14px">Checking lock status...</div>
-     <div class="fld"><label>Fake-update screen (Windows Update style)</label>
-       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
-         <div style="display:flex;align-items:center;gap:7px">
-           <span style="font-size:13px;color:#cfe0ff">Blue</span>
-           <button type="button" id="tgBlue" onclick="toggleMode('blue')" style="padding:7px 16px;border-radius:7px;border:1px solid #2a6bb0;background:#0067b8;color:#fff;font-size:12.5px;cursor:pointer">OFF</button>
-         </div>
-         <div style="display:flex;align-items:center;gap:7px">
-           <span style="font-size:13px;color:#cfcfcf">Black</span>
-           <button type="button" id="tgBlack" onclick="toggleMode('black')" style="padding:7px 16px;border-radius:7px;border:1px solid #555;background:#000;color:#fff;font-size:12.5px;cursor:pointer">OFF</button>
-         </div>
-         <span id="modeBadge" style="margin-left:4px;font-size:12px;padding:5px 12px;border-radius:20px;background:#2b3550;color:#9fb0d0">Off</span>
-       </div>
-       <div class="hint">Click Blue or Black to show that update screen on the client. Click the same button again to turn it off.</div>
-     </div>
-     <div class="fld"><label>Company name (shows at bottom)</label><input type="text" id="lktext" placeholder="CloudPulse IT Services"></div>
-     <div class="fld"><label>Background color</label><input type="color" id="lkcolor" value="#0f172a"></div>
-     <div class="fld"><label>Background image link (optional)</label><input type="url" id="lkimg" placeholder="https://.../your-image.png"></div>
-     <button class="savebtn" onclick="saveLock()">Save lock settings</button>
-     <div class="hint">Leave blank to use defaults (navy + "Maintenance in progress"). Image must be a direct link ending in .png/.jpg.</div>
    </div>`;
-  loadLock();checkWork();
+  checkWork();
 }
 function btn(a,label,cls){return `<button class="act ${cls}" onclick="act('${a}')">${label}</button>`;}
 async function act(a){
@@ -812,7 +786,7 @@ function timeAgo(iso){
   if(s<86400)return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('lockStatus')){checkLock();checkWork();}},5000);
+load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('wcBadge')){checkWork();}},5000);
 </script></body></html>
 '@
 
