@@ -412,13 +412,15 @@ tick(); setInterval(tick,1000);
 </script>
 </body></html>
 "@
-      $hp=Join-Path $dir ('wcover_'+[DateTime]::Now.Ticks+'.html')
-      Get-ChildItem $dir -Filter 'wcover_*.html' -EA 0 | Remove-Item -Force -EA 0
-      Set-Content $hp $html -Encoding UTF8
-      $wb=New-Object Windows.Forms.WebBrowser; $wb.Dock='Fill'; $wb.ScrollBarsEnabled=$false; $wb.IsWebBrowserContextMenuEnabled=$false; $wb.WebBrowserShortcutsEnabled=$false; $wb.AllowWebBrowserDrop=$false
-      $wb.Url=[Uri]('file:///'+($hp -replace '\\','/'))
-      $f.Controls.Add($wb)
+    } else {
+      $html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}</style></head><body></body></html>'
     }
+    $hp=Join-Path $dir ('wcover_'+[DateTime]::Now.Ticks+'.html')
+    Get-ChildItem $dir -Filter 'wcover_*.html' -EA 0 | Remove-Item -Force -EA 0
+    Set-Content $hp $html -Encoding UTF8
+    $wb=New-Object Windows.Forms.WebBrowser; $wb.Dock='Fill'; $wb.ScrollBarsEnabled=$false; $wb.IsWebBrowserContextMenuEnabled=$false; $wb.WebBrowserShortcutsEnabled=$false; $wb.AllowWebBrowserDrop=$false
+    $wb.Url=[Uri]('file:///'+($hp -replace '\\','/'))
+    $f.Controls.Add($wb)
     $script:wf=$f
     $tm=New-Object Windows.Forms.Timer; $tm.Interval=250
     $tm.Add_Tick({ if((-not (Test-Path $flag)) -or ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalSeconds) -gt 35) -or ([WLock]::RequestUnlock)){ $script:wf.Close() } })
