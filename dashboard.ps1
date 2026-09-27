@@ -412,6 +412,11 @@ $script:workCover = @{}
 # clients under a "fake-off + restart in 5 min": keep the black cover fresh only until
 # this time, then stop (so the PC reboots clean and doesn't get re-covered after restart).
 $script:deadUntil = @{}
+# Live-preview cache. The thumbnail JPEG is fetched from the client in a BACKGROUND ssh
+# process (never in the request path), so /api/thumb returns instantly from cache and can
+# never jam the single-threaded server (which was making buttons take minutes).
+$script:thumbCache = @{}
+$script:thumbFetch = @{}
 function Save-LockState { }
 # Keep each locked client's flag FRESH. The front-end pings /api/heartbeat every 3s, so
 # this refreshes the flag well within the client's 30s freshness window. When the dashboard
@@ -1098,15 +1103,34 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
             Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/workcoverget') {
+            # Serve from the dashboard's own tracked state - no SSH, instant, never blocks.
             $ip = $ctx.Request.QueryString['ip']
-            Send $ctx (@{ active = (Get-WorkCover $ip) } | ConvertTo-Json -Compress) 'application/json'
+            $a = if ($script:workCover.ContainsKey($ip)) { $script:workCover[$ip] } else { 'off' }
+            Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/thumb') {
-            # refresh THUMB.flag (keeps the client capturing) and return the latest jpg as base64
+            # NON-BLOCKING preview: fetch the JPEG in a background ssh process and serve the
+            # last cached image instantly. This never stalls the single-threaded server, so
+            # button clicks stay fast even while the preview is refreshing.
             $ip = $ctx.Request.QueryString['ip']
-            $tps = "`$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null; Set-Content (Join-Path `$d 'THUMB.flag') '1' -Encoding ascii; `$f=Join-Path `$d 'thumb.jpg'; if(Test-Path `$f){[Convert]::ToBase64String([IO.File]::ReadAllBytes(`$f))}"
-            $r = (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $tps)))
-            $img = ($r | Out-String).Trim()
+            $tmp = Join-Path $env:TEMP ('thumb_' + ($ip -replace '[^0-9A-Za-z]','_') + '.b64')
+            $f = $script:thumbFetch[$ip]
+            # a previous background fetch finished -> load it into cache
+            if ($f -and $f.proc.HasExited) {
+                try { if (Test-Path $f.file) { $c = (Get-Content $f.file -Raw -EA 0); if ($c -and $c.Trim()) { $script:thumbCache[$ip] = $c.Trim() }; Remove-Item $f.file -Force -EA 0 } } catch {}
+                $script:thumbFetch.Remove($ip); $f = $null
+            }
+            # no fetch in flight -> start one (fire-and-forget, output redirected to a temp file)
+            if (-not $f) {
+                try {
+                    $u = Login-For $ip
+                    $tps = "`$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null; Set-Content (Join-Path `$d 'THUMB.flag') '1' -Encoding ascii; `$f=Join-Path `$d 'thumb.jpg'; if(Test-Path `$f){[Convert]::ToBase64String([IO.File]::ReadAllBytes(`$f))}"
+                    $al = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=4',"$u@$ip",('powershell -NoProfile -EncodedCommand ' + (Enc $tps)))
+                    $p = Start-Process ssh -WindowStyle Hidden -PassThru -RedirectStandardOutput $tmp -ArgumentList $al -ErrorAction SilentlyContinue
+                    if ($p) { $script:thumbFetch[$ip] = @{ proc = $p; file = $tmp } }
+                } catch {}
+            }
+            $img = if ($script:thumbCache.ContainsKey($ip)) { $script:thumbCache[$ip] } else { '' }
             Send $ctx (@{ img = $img } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/rename') {
