@@ -602,13 +602,13 @@ body.dark .hint{color:#6f7ea0}
 </div>
 <div id="right"><div id="empty">Select a machine from the list</div></div>
 <script>
-let clients=[],sel=null,liveView=true,thumbBusy=false,previewUpdatedAt=0;
+let clients=[],sel=null,liveView=true,thumbBusy=false,previewUpdatedAt=0,onlineSince={};
 function refreshPreview(){ updateThumbs(); }
+function fmtDur(ms){var s=Math.floor(ms/1000);if(s<60)return s+'s';var m=Math.floor(s/60);if(m<60)return m+'m';var h=Math.floor(m/60);return h+'h '+(m%60)+'m';}
 function tickLastUpd(){
-  const el=document.getElementById('lastUpd');if(!el)return;
-  if(!previewUpdatedAt){el.textContent='Last updated: connecting...';return;}
-  const s=Math.floor((Date.now()-previewUpdatedAt)/1000);
-  el.textContent='Last updated: '+(s<2?'just now':(s<60?s+'s ago':Math.floor(s/60)+'m ago'));
+  const el=document.getElementById('lastUpd');if(!el||!sel)return;
+  if(sel.online){ const t=onlineSince[sel.ip]; el.textContent = t ? ('Online for '+fmtDur(Date.now()-t)) : 'Online'; }
+  else { el.textContent='Last seen '+timeAgo(sel.lastSeen); }
 }
 function toggleLive(){
   liveView=!liveView;
@@ -652,6 +652,7 @@ function render(){
   document.getElementById('cAll').textContent=clients.length;
   document.getElementById('cOn').textContent=on;
   document.getElementById('cOff').textContent=clients.length-on;
+  clients.forEach(c=>{ if(c.online){ if(!onlineSince[c.ip]) onlineSince[c.ip]=Date.now(); } else { delete onlineSince[c.ip]; } });
   let arr=clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q));
   if(curGroup==='online')arr=arr.filter(c=>c.online);
   if(curGroup==='offline')arr=arr.filter(c=>!c.online);
@@ -680,7 +681,7 @@ function panel(){
      <button class="rn" id="copyIpBtn" onclick="copyIp('${sel.ip}')" title="Copy this client's Tailscale IP for RustDesk">Copy IP</button>
      <button class="rn" onclick="rename()">Rename</button></div>
    ${sel.online?('<div class="preview"><div class="ov" data-ov="'+sel.ip+'"><div class="spin"></div>Connecting to '+esc(sel.name)+'...</div>'+(liveView?'<img class="thumb" data-ip="'+sel.ip+'">':'<div class="ov">Live view is OFF</div>')+'</div>'+
-     '<div style="margin:7px 18px 0;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#8a93a3"><span id="lastUpd">Last updated: just now</span><button class="rn" style="margin:0;padding:3px 10px" onclick="refreshPreview()">Update now</button></div>'):''}
+     '<div style="margin:7px 18px 0;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#8a93a3"><span id="lastUpd">...</span><button class="rn" style="margin:0;padding:3px 10px" onclick="refreshPreview()">Update now</button></div>'):''}
    <div class="acts">
      ${btn('screen','Open screen','go')}
      ${btn('terminal','Terminal','')}
