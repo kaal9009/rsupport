@@ -531,8 +531,8 @@ body{background:#eef1f5;color:#2a2f3a;display:flex;height:100vh;overflow:hidden;
 .rtop .sub{font-size:12px;color:#8a93a3;margin-top:3px}
 .badge{display:inline-block;margin-top:9px;font-size:11px;padding:3px 10px;border-radius:20px}
 .badge.on{background:#e4f6e8;color:#2e8b40}.badge.off{background:#fdeaea;color:#c0504a}
-.preview{position:relative;margin:14px 18px 4px;border:1px solid #d7dde6;border-radius:8px;overflow:hidden;aspect-ratio:16/9;background:#0a0d16}
-.preview img{width:100%;height:100%;object-fit:cover;display:block}
+.preview{position:relative;margin:14px 18px 4px;border:1px solid #d7dde6;border-radius:8px;overflow:hidden;height:0;padding-bottom:56.25%;background:#0a0d16}
+.preview img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .preview .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#8a93a3;background:#0a0d16}
 .acts{padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:9px}
 button.act{padding:11px;border-radius:7px;border:1px solid #dfe4ee;background:#f5f8fd;color:#2a2f3a;font-size:13px;cursor:pointer;text-align:left}
