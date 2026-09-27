@@ -68,7 +68,7 @@ function Get-Clients {
 
 function SSH-Run($ip, $cmd) {
     $u = Login-For $ip
-    $r = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 -o BatchMode=yes "$u@$ip" $cmd 2>&1
+    $r = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes "$u@$ip" $cmd 2>&1
     return ($r | Out-String)
 }
 # Fire-and-forget: send a command over SSH WITHOUT waiting for the reply. Used by every
@@ -200,7 +200,9 @@ if(-not (Test-Path `$marker)){
 if((Test-Path `$fl) -and ((Get-Content `$fl -Raw).Trim().ToLower() -ne '$mode')){ Remove-Item `$fl -Force -EA 0; Start-Sleep -Milliseconds 350 }
 Set-Content `$fl '$mode' -Encoding ascii
 "@
-    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
+    # Fire-and-forget: the monitor-add + taskbar setup runs on the client in the background,
+    # so the dashboard never freezes waiting for it.
+    SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     $script:workCover[$ip] = $mode
     return $mode
 }
@@ -213,7 +215,9 @@ Remove-Item (Join-Path `$d 'workmon.on') -Force -EA 0
 `$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
 if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){ cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null }
 "@
-    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
+    # Fire-and-forget: teardown (remove cover, disable virtual monitor) happens on the
+    # client in the background - the dashboard returns instantly, no freeze.
+    SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     $script:workCover.Remove($ip)
     return 'off'
 }
