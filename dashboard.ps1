@@ -211,6 +211,22 @@ function Get-WorkCover($ip) {
     return $m
 }
 
+# Push the friendly-name map (HOSTNAME=name) to every online client, so the
+# Telegram online/offline alerts show your dashboard names instead of raw hostnames.
+function Push-Names {
+    $clients = Get-Clients
+    $lines = @()
+    foreach ($c in $clients) { if ($c.host -and $c.name) { $lines += ($c.host.ToUpper() + '=' + $c.name) } }
+    if (-not $lines.Count) { return }
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($lines -join "`n")))
+    $ps = @"
+`$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path `$d 'names.txt'),[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$b64')))
+"@
+    $enc = Enc $ps
+    foreach ($c in $clients) { if ($c.online) { SSH-Run $c.ip ("powershell -NoProfile -EncodedCommand $enc") | Out-Null } }
+}
+
 function Set-AutoLogin($ip, $pass) {
     $cu = (SSH-Run $ip 'powershell -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).UserName"').Trim()
     if (-not $cu) { return "Could not detect the logged-in user. Make sure someone is logged in on that PC." }
@@ -815,6 +831,7 @@ $listener.Prefixes.Add($prefix)
 try { $listener.Start() } catch { Write-Host "Could not start on $prefix - maybe already running?"; exit }
 Write-Host "Dashboard running at $prefix   (close this window to stop)"
 Start-Process $prefix
+try { Push-Names } catch {}   # push friendly names to clients so Telegram alerts use them
 
 # When this window is closed (X button / Ctrl+C / logoff), drop every fake-update
 # screen so no client is left stuck on the update screen.
@@ -912,7 +929,10 @@ while ($true) {
             Send $ctx (@{ active = (Get-WorkCover $ip) } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/rename') {
-            $b = Body $ctx; Save-Name $b.host $b.name; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'
+            $b = Body $ctx; Save-Name $b.host $b.name; try { Push-Names } catch {}; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/syncnames') {
+            try { Push-Names } catch {}; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'
         }
         else { $ctx.Response.StatusCode = 404; Send $ctx 'not found' 'text/plain' }
     } catch {

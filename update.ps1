@@ -119,6 +119,9 @@ if(-not(Test-Path $conf)){ exit }
 $token='';$chat=''
 foreach($l in Get-Content $conf){ if($l -match '^token=(.+)$'){$token=$matches[1].Trim()} elseif($l -match '^chat=(.+)$'){$chat=$matches[1].Trim()} }
 if(-not $token -or -not $chat){ exit }
+$names=@{}; $nf=Join-Path $dir 'names.txt'
+if(Test-Path $nf){ foreach($l in Get-Content $nf){ if($l -match '^(.+?)=(.+)$'){ $names[$matches[1].Trim().ToUpper()]=$matches[2].Trim() } } }
+function Nm($h){ if($h -and $names.ContainsKey($h.ToUpper())){ return $names[$h.ToUpper()] } else { return $h } }
 $ts=@('C:\Program Files\Tailscale\tailscale.exe','C:\Program Files (x86)\Tailscale IPN\tailscale.exe')|?{Test-Path $_}|Select-Object -First 1
 if(-not $ts){ exit }
 $selfIp=(& $ts ip -4 2>$null | Select-Object -First 1)
@@ -132,7 +135,7 @@ $state=Join-Path $dir 'tg-state.txt'
 $prev=@{};$first=-not(Test-Path $state)
 if(-not $first){ foreach($l in Get-Content $state){ if($l -match '^(.*)=(0|1)$'){ $prev[$matches[1]]=($matches[2] -eq '1') } } }
 function Send($t){ try{ Invoke-RestMethod -Method Post -Uri ("https://api.telegram.org/bot$token/sendMessage") -Body @{chat_id=$chat;text=$t}|Out-Null }catch{} }
-foreach($h in $peers.Keys){ if($prev.ContainsKey($h) -and $prev[$h] -ne $peers[$h]){ if($peers[$h]){ Send ("ONLINE  - $h") } else { Send ("OFFLINE - $h") } } }
+foreach($h in $peers.Keys){ if($prev.ContainsKey($h) -and $prev[$h] -ne $peers[$h]){ if($peers[$h]){ Send ("ONLINE  - " + (Nm $h)) } else { Send ("OFFLINE - " + (Nm $h)) } } }
 ($peers.GetEnumerator()|ForEach-Object{ $_.Key+'='+([int][bool]$_.Value) })|Set-Content $state -Encoding utf8
 '@
   Set-Content (Join-Path $dir 'tg-watch.ps1') $w -Encoding utf8
