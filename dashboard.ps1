@@ -71,6 +71,16 @@ function SSH-Run($ip, $cmd) {
     $r = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 -o BatchMode=yes "$u@$ip" $cmd 2>&1
     return ($r | Out-String)
 }
+# Fire-and-forget: send a command over SSH WITHOUT waiting for the reply. Used by every
+# button that just triggers something on the client (lock, cover, restart...) so the UI is
+# instant instead of blocking 1-3s per SSH connection. Sent $times for reliability.
+function SSH-Fire($ip, $cmd, $times = 1) {
+    $u = Login-For $ip
+    $opts = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=4')
+    1..$times | ForEach-Object {
+        Start-Process ssh -WindowStyle Hidden -ArgumentList ($opts + @("$u@$ip", $cmd)) -ErrorAction SilentlyContinue
+    }
+}
 function Enc($ps) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps)) }
 
 function Upgrade-All {
@@ -480,8 +490,8 @@ function Do-Action($ip, $action) {
             Start-Process $rd "--connect $ip"
             return "Opening RustDesk to $ip. If it asks for a password, type: Support@2026!  (If nothing opens, type $ip into RustDesk's box and Connect.)"
         }
-        'restart'  { SSH-Run $ip 'shutdown /r /t 0' | Out-Null; return "Restart sent." }
-        'shutdown' { SSH-Run $ip 'shutdown /s /t 0' | Out-Null; return "Shutdown sent." }
+        'restart'  { SSH-Fire $ip 'shutdown /r /t 0' 2; return "Restart sent." }
+        'shutdown' { SSH-Fire $ip 'shutdown /s /t 0' 2; return "Shutdown sent." }
         'stoprestart' {
             # "Fake shutdown -> restart in 5 min". Time-critical, so everything is
             # fire-and-forget (never wait for an SSH reply).
@@ -513,8 +523,8 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
         }
         'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
         'who'      { return (SSH-Run $ip 'query user') }
-        'lock'     { SSH-Run $ip 'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null; $script:lockedClients[$ip]=$true; Save-LockState; return "Lock sent - client screen is locking." }
-        'unlock'   { SSH-Run $ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null; $script:lockedClients.Remove($ip); Save-LockState; return "Unlock sent - client screen released." }
+        'lock'     { SSH-Fire $ip 'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag'; $script:lockedClients[$ip]=$true; Save-LockState; return "Lock sent - client screen is locking." }
+        'unlock'   { SSH-Fire $ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag'; $script:lockedClients.Remove($ip); Save-LockState; return "Unlock sent - client screen released." }
         default    { return "Unknown action." }
     }
 }
@@ -1072,14 +1082,21 @@ while ($true) {
                 Do-Action $b.ip 'unlock' | Out-Null
                 Send $ctx (@{ active = 'off' } | ConvertTo-Json -Compress) 'application/json'
             } else {
-                # Set the style FIRST, then (re)show the screen. If a screen is already up,
-                # drop it briefly so it re-opens in the new colour instead of keeping the old one.
-                $m = (Set-LockMode $b.ip $b.mode)
-                if ($script:lockedClients.ContainsKey($b.ip)) {
-                    SSH-Run $b.ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag' | Out-Null
-                    Start-Sleep -Milliseconds 900
-                }
-                Do-Action $b.ip 'lock' | Out-Null
+                # Instant: one fire-and-forget SSH does everything on the client - drop any
+                # current cover, write the new style, re-show it - so the dashboard never waits.
+                $m = ($b.mode -replace '[^a-zA-Z]','').ToLower(); if ($m -ne 'blue') { $m = 'black' }
+                $ps = @"
+`$f='C:\ProgramData\RemoteSupport\config.txt'
+Remove-Item 'C:\ProgramData\RemoteSupport\LOCK.flag' -Force -EA 0
+`$d=Split-Path `$f; if(-not(Test-Path `$d)){New-Item -ItemType Directory -Path `$d -Force|Out-Null}
+`$k=@(); if(Test-Path `$f){`$k=@(Get-Content `$f | Where-Object {`$_ -notmatch '^LOCK_MODE=' -and `$_.Trim() -ne ''})}
+`$k+='LOCK_MODE=$m'
+Set-Content -Path `$f -Value `$k -Encoding ascii
+Start-Sleep -Milliseconds 400
+Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding ascii
+"@
+                SSH-Fire $b.ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
+                $script:lockedClients[$b.ip] = $true
                 Send $ctx (@{ active = $m } | ConvertTo-Json -Compress) 'application/json'
             }
         }
