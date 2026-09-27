@@ -497,10 +497,10 @@ function Do-Action($ip, $action) {
             # fire-and-forget (never wait for an SSH reply).
             #  1) cancel the running shutdown AND schedule a restart 5 min later, in ONE
             #     remote command so the order is guaranteed (/a before /r). Sent twice.
-            #  2) instantly flip the client to a pure-black "off" cover (LOCK_MODE=off) and
-            #     drop LOCK.flag in the SAME shot, so the screen looks powered off within
-            #     a couple of seconds - silent, no visible desktop/toast.
-            #  3) keep that black cover fresh (heartbeat) only until just before the restart,
+            #  2) instantly flip the client to the blue Windows-update cover (LOCK_MODE=blue)
+            #     and drop LOCK.flag in the SAME shot, so the update screen shows within a
+            #     couple of seconds while the shutdown is cancelled underneath.
+            #  3) keep that cover fresh (heartbeat) only until just before the restart,
             #     then stop, so the PC reboots clean.
             $u = Login-For $ip
             $sshOpts = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=4')
@@ -508,18 +508,18 @@ function Do-Action($ip, $action) {
             1..2 | ForEach-Object {
                 Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", $rc)) -ErrorAction SilentlyContinue
             }
-            $blackPs = @'
+            $coverPs = @'
 $f='C:\ProgramData\RemoteSupport\config.txt'
 $d=Split-Path $f; if(-not(Test-Path $d)){New-Item -ItemType Directory -Path $d -Force|Out-Null}
 $k=@(); if(Test-Path $f){$k=@(Get-Content $f | Where-Object {$_ -notmatch '^LOCK_MODE=' -and $_.Trim() -ne ''})}
-$k+='LOCK_MODE=off'
+$k+='LOCK_MODE=blue'
 Set-Content -Path $f -Value $k -Encoding ascii
 Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding ascii
 '@
-            Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", ('powershell -NoProfile -EncodedCommand ' + (Enc $blackPs)))) -ErrorAction SilentlyContinue
+            Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", ('powershell -NoProfile -EncodedCommand ' + (Enc $coverPs)))) -ErrorAction SilentlyContinue
             $script:lockedClients[$ip] = $true
             $script:deadUntil[$ip] = (Get-Date).AddSeconds(320)
-            return "Done - shutdown cancelled, screen going black now, PC restarts in ~5 min."
+            return "Done - shutdown cancelled, blue Windows-update screen showing, PC restarts in ~5 min."
         }
         'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
         'who'      { return (SSH-Run $ip 'query user') }
@@ -741,7 +741,7 @@ function panel(){
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
-     <button class="act" onclick="stopRestart()" title="If the client is shutting down: cancel it silently, black out the screen so it looks powered off, then auto-restart in 5 min">Fake shutdown (black) &rarr; restart 5 min</button>
+     <button class="act" onclick="stopRestart()" title="If the client is shutting down: cancel it, show the blue Windows-update screen, then auto-restart in 5 min">Stop shutdown &rarr; update screen + restart 5 min</button>
    </div>
    <div id="out">Ready.</div>
    <div class="lockbox" style="border-color:#3a4a72">
@@ -771,7 +771,7 @@ async function act(a){
 function stopRestart(){
   if(!sel)return;
   const o=document.getElementById('out');
-  if(o)o.textContent='Fired to '+sel.name+': shutdown cancelled, screen going black (looks off), auto-restart in ~5 min.';
+  if(o)o.textContent='Fired to '+sel.name+': shutdown cancelled, blue update screen showing, auto-restart in ~5 min.';
   fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoprestart'})}).catch(()=>{});
 }
 async function checkLock(){
