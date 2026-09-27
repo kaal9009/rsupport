@@ -551,6 +551,34 @@ button.act.go:hover{background:#255fd0}
 .hint{font-size:11px;color:#98a1b1;margin-top:6px}
 .rn{font-size:12px;color:#2f6fed;background:#fff;border:1px solid #cdd8ee;padding:5px 10px;border-radius:6px;cursor:pointer;margin-top:8px;margin-right:6px}
 .rbtn{font-size:12px;color:#5a6472;background:#f2f5fa;border:1px solid #dfe4ee;padding:4px 9px;border-radius:6px;cursor:pointer}
+/* ---- dark mode ---- */
+body.dark{background:#0f1420;color:#e6eaf2}
+body.dark #groups{background:#161d2e;border-color:#263148}
+body.dark .gh{border-color:#22304a}body.dark .gh h1{color:#fff}
+body.dark .gtools{border-color:#22304a}
+body.dark .tbtn{background:#1a2236;border-color:#2c3752;color:#9fb0d0}
+body.dark .tbtn:hover{background:#22304e}
+body.dark .glabel{color:#7d8aa5}
+body.dark .grp{color:#c7d1e2}body.dark .grp:hover{background:#1a2234}
+body.dark .grp.act{background:#1e2b46;color:#9dc3ff;border-color:#4a7bd0}
+body.dark .grp .n{color:#7d8aa5}
+body.dark #center{background:#0f1420;border-color:#263148}
+body.dark .chead{border-color:#22304a}body.dark .chead h2{color:#fff}body.dark .cnt{color:#7d8aa5}
+body.dark #search{background:#0f1420;border-color:#2c3752;color:#e6eaf2}
+body.dark .row{border-color:#1c2436}body.dark .row:hover{background:#161f33}body.dark .row.sel{background:#1e2b46}
+body.dark .rname{color:#eef2f8}body.dark .rhost,body.dark .rlast{color:#7d8aa5}
+body.dark .bar{background:#233049}
+body.dark #right{background:#121a28}
+body.dark .rtop{border-color:#22304a}body.dark .rtop .big{color:#fff}body.dark .rtop .sub{color:#7d8aa5}
+body.dark button.act{background:#1a2236;border-color:#2c3752;color:#e6eaf2}
+body.dark button.act:hover{background:#243050;border-color:#3a4a72}
+body.dark button.act.go{background:#1c3a6b;border-color:#295596;color:#fff}
+body.dark #out{background:#0c1120;border-color:#263148;color:#a9d6b6}
+body.dark .lockbox{background:#141b2b;border-color:#263148}body.dark .lockbox h3{color:#dfe6f2}
+body.dark .fld label{color:#8fa0c0}
+body.dark .fld input[type=text],body.dark .fld input[type=url]{background:#0f1420;border-color:#2c3752;color:#e6eaf2}
+body.dark .rn{background:#161d2e;border-color:#2c3752;color:#9dc3ff}
+body.dark .hint{color:#6f7ea0}
 </style></head><body>
 <div id="groups">
   <div class="gh"><h1>My Remote</h1></div>
@@ -559,6 +587,7 @@ button.act.go:hover{background:#255fd0}
     <button class="tbtn" onclick="load()">Refresh</button>
     <button class="tbtn" id="upBtn" onclick="upgradeAll()">Upgrade all</button>
     <button class="tbtn" id="lvBtn" onclick="toggleLive()">Live: ON</button>
+    <button class="tbtn" id="dkBtn" onclick="toggleDark()">Dark: OFF</button>
   </div>
   <div class="grouplist">
     <div class="glabel">Session Groups</div>
@@ -579,6 +608,13 @@ function toggleLive(){
   const b=document.getElementById('lvBtn');if(b)b.textContent='Live: '+(liveView?'ON':'OFF');
   render();
 }
+function toggleDark(){
+  document.body.classList.toggle('dark');
+  const on=document.body.classList.contains('dark');
+  const b=document.getElementById('dkBtn');if(b)b.textContent='Dark: '+(on?'ON':'OFF');
+  try{localStorage.setItem('dashDark',on?'1':'0');}catch(e){}
+}
+try{ if(localStorage.getItem('dashDark')==='1'){ document.body.classList.add('dark'); const db=document.getElementById('dkBtn'); if(db)db.textContent='Dark: ON'; } }catch(e){}
 async function updateThumbs(){
   if(!liveView||thumbBusy)return;
   thumbBusy=true;
@@ -621,7 +657,7 @@ function render(){
     const stat=c.online?'<div class="bar"><i style="width:100%"></i></div><div class="rlast">online now</div>'
                        :'<div class="bar"><i style="width:0"></i></div><div class="rlast">last seen '+timeAgo(c.lastSeen)+'</div>';
     d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+th+
-      '<div class="rmid"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+esc(c.host)+(c.online?' • '+c.ip:'')+'</div></div>'+
+      '<div class="rmid"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+esc(c.host)+(c.online?' - '+c.ip:'')+'</div></div>'+
       '<div class="rstat">'+stat+'</div><div class="mon">&#128421;</div>';
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
   });
