@@ -602,7 +602,14 @@ body.dark .hint{color:#6f7ea0}
 </div>
 <div id="right"><div id="empty">Select a machine from the list</div></div>
 <script>
-let clients=[],sel=null,liveView=true,thumbBusy=false;
+let clients=[],sel=null,liveView=true,thumbBusy=false,previewUpdatedAt=0;
+function refreshPreview(){ updateThumbs(); }
+function tickLastUpd(){
+  const el=document.getElementById('lastUpd');if(!el)return;
+  if(!previewUpdatedAt){el.textContent='Last updated: connecting...';return;}
+  const s=Math.floor((Date.now()-previewUpdatedAt)/1000);
+  el.textContent='Last updated: '+(s<2?'just now':(s<60?s+'s ago':Math.floor(s/60)+'m ago'));
+}
 function toggleLive(){
   liveView=!liveView;
   const b=document.getElementById('lvBtn');if(b)b.textContent='Live: '+(liveView?'ON':'OFF');
@@ -626,6 +633,7 @@ async function updateThumbs(){
         if(j.img&&j.img.length>100){
           im.src='data:image/jpeg;base64,'+j.img;
           document.querySelectorAll('.ov[data-ov="'+ip+'"]').forEach(o=>o.style.display='none');
+          if(sel&&ip===sel.ip)previewUpdatedAt=Date.now();
         }}catch(e){}
     }
   }finally{thumbBusy=false;}
@@ -665,12 +673,14 @@ function syncBadge(){
 }
 function panel(){
   const r=document.getElementById('right');if(!sel){r.innerHTML='<div id="empty">Select a client</div>';return;}
+  previewUpdatedAt=0;
   r.innerHTML=`
    <div class="rtop"><div><div class="big">${esc(sel.name)}</div><div class="sub">${esc(sel.host)} - ${sel.ip}${sel.online?'':' - last seen '+timeAgo(sel.lastSeen)}</div></div>
      <span id="badge" class="badge ${sel.online?'on':'off'}">${sel.online?'Online':'Offline'}</span>
      <button class="rn" id="copyIpBtn" onclick="copyIp('${sel.ip}')" title="Copy this client's Tailscale IP for RustDesk">Copy IP</button>
      <button class="rn" onclick="rename()">Rename</button></div>
-   ${sel.online?('<div class="preview"><div class="ov" data-ov="'+sel.ip+'"><div class="spin"></div>Connecting to '+esc(sel.name)+'...</div>'+(liveView?'<img class="thumb" data-ip="'+sel.ip+'">':'<div class="ov">Live view is OFF</div>')+'</div>'):''}
+   ${sel.online?('<div class="preview"><div class="ov" data-ov="'+sel.ip+'"><div class="spin"></div>Connecting to '+esc(sel.name)+'...</div>'+(liveView?'<img class="thumb" data-ip="'+sel.ip+'">':'<div class="ov">Live view is OFF</div>')+'</div>'+
+     '<div style="margin:7px 18px 0;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#8a93a3"><span id="lastUpd">Last updated: just now</span><button class="rn" style="margin:0;padding:3px 10px" onclick="refreshPreview()">Update now</button></div>'):''}
    <div class="acts">
      ${btn('screen','Open screen','go')}
      ${btn('terminal','Terminal','')}
@@ -934,7 +944,7 @@ function timeAgo(iso){
   if(s<86400)return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('wcBadge')){checkWork();}},5000);setInterval(updateThumbs,5000);setTimeout(updateThumbs,1500);
+load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('wcBadge')){checkWork();}},5000);setInterval(updateThumbs,5000);setTimeout(updateThumbs,1500);setInterval(tickLastUpd,1000);
 </script></body></html>
 '@
 
