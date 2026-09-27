@@ -327,17 +327,16 @@ try {
 #  WORKCOVER.flag (content: black | update).
 # ============================================================
 try {
+  # usbmmidd has been dropped from the kit: it CONFLICTS with RustDesk's own virtual display
+  # driver (RustDesk issue #14034), which was stopping the 2nd screen from showing over RustDesk.
+  # The work-behind 2nd screen now comes from RustDesk itself (remote toolbar -> Display ->
+  # Virtual display -> +). If a client still has usbmmidd installed from an earlier version,
+  # disable + uninstall it here so it stops conflicting.
   $vdDir = Join-Path $dir 'usbmmidd_v2'
   $vdDi  = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'deviceinstaller64' } else { 'deviceinstaller' }
-  if (-not (Test-Path (Join-Path $vdDir 'usbmmidd.inf'))) {
-    try {
-      $vz = Join-Path $dir 'usbmmidd_v2.zip'
-      Invoke-WebRequest 'https://amyuni.com/downloads/usbmmidd_v2.zip' -OutFile $vz -UseBasicParsing
-      Expand-Archive $vz -DestinationPath $dir -Force; Remove-Item $vz -EA 0
-    } catch {}
-  }
-  if ((Test-Path (Join-Path $vdDir 'usbmmidd.inf')) -and -not (Get-PnpDevice -FriendlyName 'USB Mobile Monitor Virtual Display' -EA 0)) {
-    cmd /c "`"$vdDir\$vdDi`" install `"$vdDir\usbmmidd.inf`" usbmmidd" | Out-Null
+  if ((Test-Path (Join-Path $vdDir "$vdDi.exe")) -and (Get-PnpDevice -FriendlyName 'USB Mobile Monitor Virtual Display' -EA 0)) {
+    cmd /c "`"$vdDir\$vdDi`" enableidd 0" | Out-Null
+    cmd /c "`"$vdDir\$vdDi`" remove usbmmidd" | Out-Null
   }
 } catch {}
 

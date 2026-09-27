@@ -176,14 +176,10 @@ function Start-WorkCover($ip, $mode) {
     $ps = @"
 `$d='C:\ProgramData\RemoteSupport'
 `$marker=Join-Path `$d 'workmon.on'
-# ALWAYS make sure exactly one virtual monitor is present (cheap + idempotent). This is
-# outside the marker-gate so the 2nd screen can never be skipped if it was removed earlier.
-`$vd=Join-Path `$d 'usbmmidd_v2'
-`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
-if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
-  `$hasVd = [bool](Get-CimInstance Win32_VideoController -EA 0 | Where-Object {`$_.Name -like '*USB Mobile Monitor*'})
-  if(-not `$hasVd){ cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null; Start-Sleep 2 }
-}
+# NOTE: the 2nd screen now comes from RustDesk's OWN virtual display (toolbar -> Display ->
+# Virtual display -> +). We no longer touch usbmmidd here because it conflicts with RustDesk's
+# virtual display driver. This function only shows the cover + locks physical input; the
+# taskbar-on-all-displays (below, gated by the marker) still gives that RustDesk screen a taskbar.
 # One-time heavy setup (taskbar on all displays + explorer restart) stays gated by the marker.
 if(-not (Test-Path `$marker)){
   try{
@@ -211,12 +207,10 @@ function Stop-WorkCover($ip) {
 `$d='C:\ProgramData\RemoteSupport'
 Remove-Item (Join-Path `$d 'WORKCOVER.flag') -Force -EA 0
 Remove-Item (Join-Path `$d 'workmon.on') -Force -EA 0
-`$vd=Join-Path `$d 'usbmmidd_v2'
-`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
-if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){ cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null }
 "@
-    # Fire-and-forget: teardown (remove cover, disable virtual monitor) happens on the
-    # client in the background - the dashboard returns instantly, no freeze.
+    # Fire-and-forget: teardown (remove cover) happens on the client in the background - the
+    # dashboard returns instantly. The RustDesk virtual display is unplugged from RustDesk's
+    # own toolbar (Display -> Virtual display -> - / Plug out all), not from here.
     SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     $script:workCover.Remove($ip)
     return 'off'
