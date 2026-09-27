@@ -404,6 +404,13 @@ function Heartbeat {
         $u = Login-For $ip
         Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip",'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag' -ErrorAction SilentlyContinue
     }
+    # keep each active work-cover fresh; if this dashboard stops (window closed / PC
+    # off / crash), the refresh stops and the client drops the cover within ~35s.
+    foreach ($ip in @($script:workCover.Keys)) {
+        $u = Login-For $ip
+        $m = $script:workCover[$ip]
+        Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$ip","cmd /c echo $m> C:\ProgramData\RemoteSupport\WORKCOVER.flag" -ErrorAction SilentlyContinue
+    }
     return $script:lockedClients.Count
 }
 # Called when the dashboard is closing: proactively drop every fake-update screen now

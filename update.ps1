@@ -369,7 +369,7 @@ public class WLock{
 }
 "@
 while($true){
-  if((Test-Path $flag) -and ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalHours) -lt 3)){
+  if((Test-Path $flag) -and ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalSeconds) -lt 35)){
     $mode=(Get-Content $flag -Raw).Trim().ToLower(); if($mode -ne 'update'){ $mode='black' }
     if($mode -eq 'update'){ $bg='#006dae' } else { $bg='#000000' }
     $b=[Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -408,7 +408,7 @@ html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe
     }
     $script:wf=$f
     $tm=New-Object Windows.Forms.Timer; $tm.Interval=250
-    $tm.Add_Tick({ if((-not (Test-Path $flag)) -or ([WLock]::RequestUnlock)){ $script:wf.Close() } })
+    $tm.Add_Tick({ if((-not (Test-Path $flag)) -or ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalSeconds) -gt 35) -or ([WLock]::RequestUnlock)){ $script:wf.Close() } })
     $tm.Start()
     [WLock]::Hook(); [void]$f.ShowDialog(); [WLock]::Unhook(); $tm.Stop()
   }
