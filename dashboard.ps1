@@ -224,7 +224,12 @@ function Push-Names {
 [IO.File]::WriteAllText((Join-Path `$d 'names.txt'),[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$b64')))
 "@
     $enc = Enc $ps
-    foreach ($c in $clients) { if ($c.online) { SSH-Run $c.ip ("powershell -NoProfile -EncodedCommand $enc") | Out-Null } }
+    foreach ($c in $clients) {
+        if ($c.online) {
+            $u = Login-For $c.ip
+            Start-Process ssh -WindowStyle Hidden -ArgumentList '-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=5',"$u@$($c.ip)","powershell -NoProfile -EncodedCommand $enc" -EA 0
+        }
+    }
 }
 
 function Set-AutoLogin($ip, $pass) {
