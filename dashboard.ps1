@@ -569,9 +569,8 @@ function panel(){
      <h3>Work behind cover (you work while client sees a cover)</h3>
      <div style="font-size:11px;color:#7d8aa5;margin:-6px 0 12px">Adds a hidden 2nd screen. Client's real screen shows black/update + their mouse/keyboard locked; you connect with RustDesk/AnyDesk, switch to monitor 2, and work normally.</div>
      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
-       <button type="button" id="wcBlack" onclick="workCover('black')" style="padding:8px 16px;border-radius:7px;border:1px solid #555;background:#000;color:#fff;font-size:12.5px;cursor:pointer">Black ON</button>
-       <button type="button" id="wcUpdate" onclick="workCover('update')" style="padding:8px 16px;border-radius:7px;border:1px solid #2a6bb0;background:#0067b8;color:#fff;font-size:12.5px;cursor:pointer">Update ON</button>
-       <button type="button" id="wcOff" onclick="workCover('off')" style="padding:8px 16px;border-radius:7px;border:1px solid #7a3a42;background:#3a2226;color:#e0868f;font-size:12.5px;cursor:pointer">OFF</button>
+       <button type="button" id="wcUpdate" onclick="workCover('update')" style="padding:8px 18px;border-radius:7px;border:1px solid #2a6bb0;background:#0067b8;color:#fff;font-size:12.5px;cursor:pointer">Update ON</button>
+       <button type="button" id="wcOff" onclick="workCover('off')" style="padding:8px 18px;border-radius:7px;border:1px solid #7a3a42;background:#3a2226;color:#e0868f;font-size:12.5px;cursor:pointer">OFF</button>
        <span id="wcBadge" style="margin-left:4px;font-size:12px;padding:5px 12px;border-radius:20px;background:#2b3550;color:#9fb0d0">Off</span>
      </div>
      <div class="hint">Turning OFF also removes the 2nd screen. Backup on the client: Ctrl+Alt+U. Closing this dashboard turns every cover off.</div>
@@ -773,12 +772,10 @@ async function toggleMode(mode){
 let wcMode='off';
 function paintWork(active){
   wcMode=active;
-  const bl=document.getElementById('wcBlack'),up=document.getElementById('wcUpdate'),bad=document.getElementById('wcBadge');
-  if(!bl||!up||!bad)return;
-  bl.style.outline=(active==='black')?'2px solid #999':'none';
+  const up=document.getElementById('wcUpdate'),bad=document.getElementById('wcBadge');
+  if(!up||!bad)return;
   up.style.outline=(active==='update')?'2px solid #7fbfff':'none';
-  if(active==='black'){bad.textContent='Black cover ON';bad.style.background='#2a2a2a';bad.style.color='#e6e6e6';}
-  else if(active==='update'){bad.textContent='Update cover ON';bad.style.background='#123a5a';bad.style.color='#8fd0ff';}
+  if(active==='update'||active==='black'){bad.textContent='Update cover ON';bad.style.background='#123a5a';bad.style.color='#8fd0ff';}
   else{bad.textContent='Off';bad.style.background='#2b3550';bad.style.color='#9fb0d0';}
 }
 async function workCover(mode){
