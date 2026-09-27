@@ -493,20 +493,22 @@ body{background:#0f1420;color:#e6eaf2;display:flex;height:100vh;overflow:hidden}
 .rbtn{font-size:12px;color:#9fb0d0;background:none;border:1px solid #2c3752;padding:4px 9px;border-radius:6px;cursor:pointer}
 .rbtn:hover{background:#22304e}
 #search{width:100%;margin-top:10px;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
-#list{flex:1;overflow-y:auto;padding:12px}
-.row{display:flex;flex-direction:column;align-items:stretch;cursor:pointer;border:1px solid #263148;border-radius:10px;overflow:hidden;background:#141b2b;margin-bottom:12px;transition:border-color .15s,transform .05s}
-.row:hover{border-color:#3a4a72}
-.row.sel{border-color:#4a7bd0;box-shadow:0 0 0 1px #4a7bd0}
-.thumbwrap{position:relative;width:100%;aspect-ratio:16/9;background:#0a0d16;overflow:hidden}
-.thumb{width:100%;height:100%;object-fit:cover;display:block}
-.thumbov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#5f6d88;background:#0a0d16;gap:8px}
-.spin{width:16px;height:16px;border:2px solid #2c3752;border-top-color:#6f86c0;border-radius:50%;animation:sp 1s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-.cardfoot{display:flex;align-items:center;gap:9px;padding:9px 12px}
+#list{flex:1;overflow-y:auto}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid #1c2436}
+.row:hover{background:#1a2234}
+.row.sel{background:#1e2b46}
 .dot{width:9px;height:9px;border-radius:50%;flex:none}
 .on{background:#38d16a;box-shadow:0 0 6px #38d16a}.off{background:#5a6577}
-.rname{font-size:13.5px;color:#eef2f8;font-weight:500}
-.rhost{font-size:11px;color:#7d8aa5}
+.lthumb{width:56px;height:33px;border-radius:5px;background:#0a0d16;border:1px solid #263148;overflow:hidden;position:relative;flex:none}
+.lthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.lthumb .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#5f6d88}
+.spin{width:14px;height:14px;border:2px solid #2c3752;border-top-color:#6f86c0;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.rname{font-size:13.5px;color:#eef2f8;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rhost{font-size:11px;color:#7d8aa5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preview{position:relative;margin:16px 20px 4px;border:1px solid #263148;border-radius:10px;overflow:hidden;aspect-ratio:16/9;background:#0a0d16}
+.preview img{width:100%;height:100%;object-fit:cover;display:block}
+.preview .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#5f6d88}
 #right{flex:1;display:flex;flex-direction:column;overflow-y:auto}
 .rtop{padding:16px 20px;border-bottom:1px solid #263148;display:flex;align-items:center;gap:12px}
 .rtop .big{font-size:17px;font-weight:600;color:#fff}
@@ -556,7 +558,7 @@ async function updateThumbs(){
       try{const r=await fetch('/api/thumb?ip='+ip,{cache:'no-store'});const j=await r.json();
         if(j.img&&j.img.length>100){
           im.src='data:image/jpeg;base64,'+j.img;
-          const ov=document.querySelector('.thumbov[data-ov="'+ip+'"]');if(ov)ov.style.display='none';
+          document.querySelectorAll('.ov[data-ov="'+ip+'"]').forEach(o=>o.style.display='none');
         }}catch(e){}
     }
   }finally{thumbBusy=false;}
@@ -570,16 +572,11 @@ function render(){
   clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q)).forEach(c=>{
     const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
     const seenLine=c.online?(esc(c.host)+' - '+c.ip):(esc(c.host)+' - last seen '+timeAgo(c.lastSeen));
-    let inner='';
-    if(c.online){
-      const ov = liveView ? '<div class="thumbov" data-ov="'+c.ip+'"><div class="spin"></div>Connecting...</div>'
-                          : '<div class="thumbov">Live view off</div>';
-      inner+='<div class="thumbwrap">'+ov+(liveView?'<img class="thumb" data-ip="'+c.ip+'">':'')+'</div>';
-    } else {
-      inner+='<div class="thumbwrap"><div class="thumbov">Offline</div></div>';
-    }
-    inner+='<div class="cardfoot"><span class="dot '+(c.online?'on':'off')+'"></span><div style="flex:1;min-width:0"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div></div>';
-    d.innerHTML=inner;
+    let th;
+    if(c.online && liveView){ th='<div class="lthumb"><div class="ov" data-ov="'+c.ip+'"><div class="spin"></div></div><img class="thumb" data-ip="'+c.ip+'"></div>'; }
+    else if(c.online){ th='<div class="lthumb"><div class="ov">on</div></div>'; }
+    else { th='<div class="lthumb"><div class="ov">off</div></div>'; }
+    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span>'+th+'<div style="flex:1;min-width:0"><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div>';
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
   });
 }
@@ -594,6 +591,7 @@ function panel(){
      <span id="badge" class="badge ${sel.online?'on':'off'}">${sel.online?'Online':'Offline'}</span>
      <button class="rn" id="copyIpBtn" onclick="copyIp('${sel.ip}')" title="Copy this client's Tailscale IP for RustDesk">Copy IP</button>
      <button class="rn" onclick="rename()">Rename</button></div>
+   ${sel.online?('<div class="preview"><div class="ov" data-ov="'+sel.ip+'"><div class="spin"></div>Connecting to '+esc(sel.name)+'...</div>'+(liveView?'<img class="thumb" data-ip="'+sel.ip+'">':'<div class="ov">Live view is OFF</div>')+'</div>'):''}
    <div class="acts">
      ${btn('screen','Open screen','go')}
      ${btn('terminal','Terminal','')}
