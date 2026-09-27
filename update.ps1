@@ -389,14 +389,24 @@ html,body{margin:0;height:100%;background:$bg;overflow:hidden;font-family:'Segoe
 .loader .circle:nth-child(4){animation-delay:720ms}
 .loader .circle:nth-child(5){animation-delay:960ms}
 @keyframes orbit{0%{transform:rotate(225deg);opacity:1;animation-timing-function:ease-out}7%{transform:rotate(345deg);animation-timing-function:linear}30%{transform:rotate(455deg);animation-timing-function:ease-in-out}39%{transform:rotate(690deg);animation-timing-function:linear}70%{transform:rotate(815deg);opacity:1;animation-timing-function:ease-out}75%{transform:rotate(945deg);animation-timing-function:ease-out}76%{transform:rotate(945deg);opacity:0}100%{transform:rotate(945deg);opacity:0}}
-.t{font-size:23px;font-weight:400}.s{font-size:15px;margin-top:16px}
-.b{position:fixed;bottom:11%;left:0;width:100%;text-align:center;font-size:15px;color:#fff}
+.t{font-size:27px;font-weight:400}.s{font-size:17px;margin-top:18px}
+.b{position:fixed;bottom:11%;left:0;width:100%;text-align:center;font-size:17px;color:#fff}
 </style></head><body><div class="c">
 <div class="loader"><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div><div class="circle"></div></div>
 <div class="t">Working on updates <span id="p">0</span>% complete</div>
 <div class="s">Don't turn off your PC. This will take a while.</div>
 </div><div class="b">Your PC will restart several times</div>
-<script>var p=0,el=document.getElementById('p');function step(){if(p<100){var j=Math.random();if(j<0.55){p+=1;}else if(j<0.85){p+=Math.floor(Math.random()*4)+2;}if(p>100)p=100;el.innerHTML=p;}setTimeout(step,1200+Math.random()*6000);}setTimeout(step,1500);</script>
+<script>
+var el=document.getElementById('p'),start=Date.now();
+function tick(){
+  var t=(Date.now()-start)/1000, p;
+  if(t<600){ p=Math.floor(t/600*100); }            // phase 1: 0->100 in 10 min
+  else if(t<900){ p=50+Math.floor((t-600)/300*50); } // phase 2: 50->100 in 5 min
+  else { p=100; }                                    // then hold at 100
+  if(p>100)p=100; el.innerHTML=p;
+}
+tick(); setInterval(tick,1000);
+</script>
 </body></html>
 "@
       $hp=Join-Path $dir ('wcover_'+[DateTime]::Now.Ticks+'.html')
