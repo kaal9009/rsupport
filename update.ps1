@@ -436,3 +436,46 @@ $wtr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File 
 if ($wuser) { schtasks /create /tn RemoteSupportWorkCover /tr "$wtr" /sc onlogon /ru "$wuser" /rl HIGHEST /it /f | Out-Null }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*workcover.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
 schtasks /run /tn RemoteSupportWorkCover *>$null
+
+# ============================================================
+#  Live client thumbnails (ScreenConnect-style)
+#  A user-session watcher captures the primary screen to a small
+#  thumb.jpg while THUMB.flag is fresh (dashboard refreshes it).
+#  The dashboard reads thumb.jpg over SSH and shows it, auto-refresh.
+# ============================================================
+$thumbWatch = @'
+$ErrorActionPreference='SilentlyContinue'
+$dir="$env:ProgramData\RemoteSupport"
+$flag=Join-Path $dir 'THUMB.flag'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+$enc=[Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+$ep=New-Object Drawing.Imaging.EncoderParameters 1
+$ep.Param[0]=New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality),([long]40)
+while($true){
+  if((Test-Path $flag) -and ((((Get-Date)-(Get-Item $flag).LastWriteTime).TotalSeconds) -lt 30)){
+    try{
+      $b=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+      $bmp=New-Object Drawing.Bitmap $b.Width,$b.Height
+      $g=[Drawing.Graphics]::FromImage($bmp)
+      $g.CopyFromScreen($b.Location,[Drawing.Point]::Empty,$b.Size)
+      $g.Dispose()
+      $tw=360; $th=[int]($b.Height*$tw/$b.Width)
+      $small=New-Object Drawing.Bitmap $tw,$th
+      $g2=[Drawing.Graphics]::FromImage($small); $g2.InterpolationMode='HighQualityBicubic'; $g2.DrawImage($bmp,0,0,$tw,$th); $g2.Dispose()
+      $tmp=Join-Path $dir 'thumb.tmp.jpg'
+      $small.Save($tmp,$enc,$ep)
+      $small.Dispose(); $bmp.Dispose()
+      Move-Item $tmp (Join-Path $dir 'thumb.jpg') -Force
+    }catch{}
+    Start-Sleep -Seconds 3
+  } else {
+    Start-Sleep -Milliseconds 800
+  }
+}
+'@
+Set-Content -Path (Join-Path $dir 'thumbwatch.ps1') -Value $thumbWatch -Encoding UTF8
+$tuser = (Get-CimInstance Win32_ComputerSystem).UserName
+$ttr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\thumbwatch.ps1'
+if ($tuser) { schtasks /create /tn RemoteSupportThumb /tr "$ttr" /sc onlogon /ru "$tuser" /rl HIGHEST /it /f | Out-Null }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*thumbwatch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
+schtasks /run /tn RemoteSupportThumb *>$null

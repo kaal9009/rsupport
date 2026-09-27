@@ -489,13 +489,15 @@ body{background:#0f1420;color:#e6eaf2;display:flex;height:100vh;overflow:hidden}
 .rbtn:hover{background:#22304e}
 #search{width:100%;margin-top:10px;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px}
 #list{flex:1;overflow-y:auto}
-.row{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-bottom:1px solid #1d2537}
+.row{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:11px 16px;cursor:pointer;border-bottom:1px solid #1d2537}
 .row:hover{background:#1c2438}
 .row.sel{background:#233152}
+.rowtop{display:flex;align-items:center;gap:10px}
 .dot{width:9px;height:9px;border-radius:50%;flex:none}
 .on{background:#38d16a}.off{background:#5a6577}
 .rname{font-size:13.5px;color:#eef2f8}
 .rhost{font-size:11px;color:#7d8aa5}
+.thumb{width:100%;border-radius:6px;background:#000;display:block;aspect-ratio:16/9;object-fit:cover;border:1px solid #263148}
 #right{flex:1;display:flex;flex-direction:column;overflow-y:auto}
 .rtop{padding:16px 20px;border-bottom:1px solid #263148;display:flex;align-items:center;gap:12px}
 .rtop .big{font-size:17px;font-weight:600;color:#fff}
@@ -523,13 +525,30 @@ button.act.go:hover{background:#245089}
 </style></head><body>
 <div id="left">
   <div class="top"><h1>My Remote Dashboard</h1>
-    <div class="rowflex"><p id="count">Loading...</p><button class="rbtn" onclick="load()">Refresh</button><button id="upBtn" class="rbtn" style="border-color:#295596;color:#9dc3ff;" onclick="upgradeAll()">Upgrade all</button><button class="rbtn" style="border-color:#2e7d46;color:#8fe0a8;" onclick="newClient()">+ New client</button></div>
+    <div class="rowflex"><p id="count">Loading...</p><button class="rbtn" onclick="load()">Refresh</button><button id="upBtn" class="rbtn" style="border-color:#295596;color:#9dc3ff;" onclick="upgradeAll()">Upgrade all</button><button class="rbtn" style="border-color:#2e7d46;color:#8fe0a8;" onclick="newClient()">+ New client</button><button id="lvBtn" class="rbtn" style="border-color:#6a4ea0;color:#c6b0ff;" onclick="toggleLive()">Live: ON</button></div>
     <input id="search" placeholder="Search clients..." oninput="render()"></div>
   <div id="list"></div>
 </div>
 <div id="right"><div id="empty">Select a client from the left</div></div>
 <script>
-let clients=[],sel=null;
+let clients=[],sel=null,liveView=true,thumbBusy=false;
+function toggleLive(){
+  liveView=!liveView;
+  const b=document.getElementById('lvBtn');if(b)b.textContent='Live: '+(liveView?'ON':'OFF');
+  render();
+}
+async function updateThumbs(){
+  if(!liveView||thumbBusy)return;
+  thumbBusy=true;
+  try{
+    const imgs=[...document.querySelectorAll('img.thumb')];
+    for(const im of imgs){
+      const ip=im.dataset.ip;if(!ip)continue;
+      try{const r=await fetch('/api/thumb?ip='+ip,{cache:'no-store'});const j=await r.json();
+        if(j.img&&j.img.length>100){im.src='data:image/jpeg;base64,'+j.img;}}catch(e){}
+    }
+  }finally{thumbBusy=false;}
+}
 async function load(){try{const r=await fetch('/api/clients');clients=await r.json();}catch(e){}render();syncBadge();}
 function render(){
   const q=(document.getElementById('search').value||'').toLowerCase();
@@ -539,7 +558,9 @@ function render(){
   clients.filter(c=>(c.name+c.host+c.ip).toLowerCase().includes(q)).forEach(c=>{
     const d=document.createElement('div');d.className='row'+(sel&&sel.ip===c.ip?' sel':'');
     const seenLine=c.online?(esc(c.host)+' - '+c.ip):(esc(c.host)+' - last seen '+timeAgo(c.lastSeen));
-    d.innerHTML='<span class="dot '+(c.online?'on':'off')+'"></span><div><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div>';
+    let inner='<div class="rowtop"><span class="dot '+(c.online?'on':'off')+'"></span><div><div class="rname">'+esc(c.name)+'</div><div class="rhost">'+seenLine+'</div></div></div>';
+    if(c.online && liveView){ inner+='<img class="thumb" data-ip="'+c.ip+'" alt="loading...">'; }
+    d.innerHTML=inner;
     d.onclick=()=>{sel=c;render();panel();};list.appendChild(d);
   });
 }
@@ -817,7 +838,7 @@ function timeAgo(iso){
   if(s<86400)return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('wcBadge')){checkWork();}},5000);
+load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(sel&&document.getElementById('wcBadge')){checkWork();}},5000);setInterval(updateThumbs,5000);setTimeout(updateThumbs,1500);
 </script></body></html>
 '@
 
@@ -924,6 +945,14 @@ while ($true) {
         elseif ($path -eq '/api/workcoverget') {
             $ip = $ctx.Request.QueryString['ip']
             Send $ctx (@{ active = (Get-WorkCover $ip) } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/thumb') {
+            # refresh THUMB.flag (keeps the client capturing) and return the latest jpg as base64
+            $ip = $ctx.Request.QueryString['ip']
+            $tps = "`$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null; Set-Content (Join-Path `$d 'THUMB.flag') '1' -Encoding ascii; `$f=Join-Path `$d 'thumb.jpg'; if(Test-Path `$f){[Convert]::ToBase64String([IO.File]::ReadAllBytes(`$f))}"
+            $r = (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $tps)))
+            $img = ($r | Out-String).Trim()
+            Send $ctx (@{ img = $img } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/rename') {
             $b = Body $ctx; Save-Name $b.host $b.name; try { Push-Names } catch {}; Send $ctx (@{ ok = $true } | ConvertTo-Json -Compress) 'application/json'
