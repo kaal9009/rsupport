@@ -176,13 +176,16 @@ function Start-WorkCover($ip, $mode) {
     $ps = @"
 `$d='C:\ProgramData\RemoteSupport'
 `$marker=Join-Path `$d 'workmon.on'
+# ALWAYS make sure exactly one virtual monitor is present (cheap + idempotent). This is
+# outside the marker-gate so the 2nd screen can never be skipped if it was removed earlier.
+`$vd=Join-Path `$d 'usbmmidd_v2'
+`$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
+if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
+  `$hasVd = [bool](Get-CimInstance Win32_VideoController -EA 0 | Where-Object {`$_.Name -like '*USB Mobile Monitor*'})
+  if(-not `$hasVd){ cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null; Start-Sleep 2 }
+}
+# One-time heavy setup (taskbar on all displays + explorer restart) stays gated by the marker.
 if(-not (Test-Path `$marker)){
-  `$vd=Join-Path `$d 'usbmmidd_v2'
-  `$di= if(`$env:PROCESSOR_ARCHITECTURE -eq 'AMD64'){'deviceinstaller64'}else{'deviceinstaller'}
-  if(Test-Path (Join-Path `$vd 'usbmmidd.inf')){
-    cmd /c "`"`$vd\`$di`" enableidd 0" | Out-Null; Start-Sleep 1
-    cmd /c "`"`$vd\`$di`" enableidd 1" | Out-Null
-  }
   try{
     `$u=(Get-CimInstance Win32_ComputerSystem).UserName
     if(`$u){ `$sid=(New-Object Security.Principal.NTAccount(`$u)).Translate([Security.Principal.SecurityIdentifier]).Value
