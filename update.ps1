@@ -195,7 +195,7 @@ while($true){
   # seconds). If the dashboard window is closed / crashes / PC loses power, the flag stops
   # being refreshed and the screen closes on its own within ~30s. Toggling keeps it fresh.
   if((Test-Path $script:flag) -and ((((Get-Date)-(Get-Item $script:flag).LastWriteTime).TotalSeconds) -lt 30)){
-    $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' 'CloudPulse IT Services' }
+    $company=(Get-Content $script:flag -Raw); if(-not $company.Trim()){ $company=Cfg 'LOCK_TEXT' '' }
     # mode: blue = real Windows Update blue, black = black. Falls back to LOCK_COLOR if set to a custom hex.
     $mode=(Cfg 'LOCK_MODE' 'black').Trim().ToLower()
     if($mode -eq 'blue'){ $bg='#006dae' } elseif($mode -eq 'black' -or $mode -eq 'off'){ $bg='#000000' } else { $bg=Cfg 'LOCK_COLOR' '#000000' }
