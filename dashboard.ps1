@@ -364,12 +364,17 @@ try{
     }catch{}
   }
   [void]$sb.Append(']')
-  $sb.ToString()
-}catch{ '[]' }
+  Write-Output ('<<<JSON>>>' + $sb.ToString() + '<<<ENDJSON>>>')
+}catch{ Write-Output '<<<JSON>>>[]<<<ENDJSON>>>' }
 '@
     $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 25
     if (-not $r) { return $null }
-    return $r.Trim()
+    # SSH output can have stray warnings/banners mixed into it (stderr merged via 2>&1,
+    # login banners, deprecation notices, etc). Pull only what's between our markers so
+    # that noise never corrupts the JSON we hand back - if the markers are missing at
+    # all, treat it as a failed scan rather than trying to parse garbage.
+    if ($r -match '<<<JSON>>>(.*?)<<<ENDJSON>>>') { return $matches[1].Trim() }
+    return $null
 }
 $script:appScanCache = @{}
 function Get-AppScan($ip, $force) {
@@ -382,7 +387,12 @@ function Get-AppScan($ip, $force) {
     $uninstMap = @{}
     $appsOut = '[]'
     $failed = $false
+    $dbgLen = 0
+    $dbgSample = ''
+    $dbgErr = ''
     if ($rawApps) {
+        $dbgLen = $rawApps.Length
+        $dbgSample = $rawApps.Substring(0, [Math]::Min(300, $rawApps.Length))
         try {
             $parsed = @($rawApps | ConvertFrom-Json)
             $sb = New-Object System.Text.StringBuilder
@@ -401,13 +411,14 @@ function Get-AppScan($ip, $force) {
             }
             [void]$sb.Append(']')
             $appsOut = $sb.ToString()
-        } catch { $appsOut = '[]' }
+        } catch { $appsOut = '[]'; $dbgErr = ('' + $_.Exception.Message) }
     } else {
         $failed = $true
+        $dbgErr = 'Scan-Apps returned null (no markers found / SSH timeout)'
     }
     $blk = Get-Blocked $ip
     if ($blk -eq $null) { $failed = $true; $blk = '[]' }
-    $entry = @{ time = $now; apps = $appsOut; blocked = $blk; blockmsg = (Get-BlockMsg $ip); uninstMap = $uninstMap; failed = $failed }
+    $entry = @{ time = $now; apps = $appsOut; blocked = $blk; blockmsg = (Get-BlockMsg $ip); uninstMap = $uninstMap; failed = $failed; dbgLen = $dbgLen; dbgSample = $dbgSample; dbgErr = $dbgErr }
     # Don't cache a failed scan - so the very next try re-scans instead of repeating
     # the same empty result for 10 minutes.
     if (-not $failed) { $script:appScanCache[$ip] = $entry }
@@ -1270,7 +1281,7 @@ while ($true) {
             $b = Body $ctx; Send $ctx (@{ output = (Do-Action $b.ip $b.action) } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/blockedall') { Send $ctx (@{ data = (Blocked-All) } | ConvertTo-Json -Compress) 'application/json' }
-        elseif ($path -eq '/api/appscan') { $b = Body $ctx; $c = Get-AppScan $b.ip ([bool]$b.force); Send $ctx (@{ apps = $c.apps; blocked = $c.blocked; protected = ($protectedApps -join ','); blockmsg = $c.blockmsg; failed = [bool]$c.failed } | ConvertTo-Json -Compress) 'application/json' }
+        elseif ($path -eq '/api/appscan') { $b = Body $ctx; $c = Get-AppScan $b.ip ([bool]$b.force); Send $ctx (@{ apps = $c.apps; blocked = $c.blocked; protected = ($protectedApps -join ','); blockmsg = $c.blockmsg; failed = [bool]$c.failed; dbgLen = $c.dbgLen; dbgSample = $c.dbgSample; dbgErr = $c.dbgErr } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/appblock') { $b = Body $ctx; Send $ctx (@{ output = (Block-App $b.ip $b.exe $b.usemsg) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/blockmsg') { $b = Body $ctx; Send $ctx (@{ output = (Set-BlockMsg $b.ip $b.msg) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/appunblock') { $b = Body $ctx; Send $ctx (@{ output = (Unblock-App $b.ip $b.exe) } | ConvertTo-Json -Compress) 'application/json' }
