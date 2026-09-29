@@ -368,7 +368,8 @@ try{
 }catch{ Write-Output '<<<JSON>>>[]<<<ENDJSON>>>' }
 '@
     $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 25
-    if (-not $r) { return $null }
+    if (-not $r) { $script:lastScanRaw = '(SSH-RunT returned nothing - timeout or connect failure)'; return $null }
+    $script:lastScanRaw = $r.Substring(0, [Math]::Min(500, $r.Length))
     # SSH output can have stray warnings/banners mixed into it (stderr merged via 2>&1,
     # login banners, deprecation notices, etc). Pull only what's between our markers so
     # that noise never corrupts the JSON we hand back - if the markers are missing at
@@ -415,6 +416,7 @@ function Get-AppScan($ip, $force) {
     } else {
         $failed = $true
         $dbgErr = 'Scan-Apps returned null (no markers found / SSH timeout)'
+        $dbgSample = ('' + $script:lastScanRaw)
     }
     $blk = Get-Blocked $ip
     if ($blk -eq $null) { $failed = $true; $blk = '[]' }
