@@ -130,16 +130,48 @@ function SSH-RunT($ip, $cmd, $timeoutSec = 15) {
 }
 # Same idea as SSH-RunT, but for scripts too big to safely pass as a single -EncodedCommand
 # command-line argument (Scan-Apps hit "ssh.exe : The command line is too long" once the
-# script grew past a few KB). Instead the script text is piped over stdin to a remote
-# "powershell -Command -", which has no such length limit and needs no base64/quoting at all.
+# script grew past a few KB). Instead the script text is written straight into ssh's stdin
+# via .NET Process (not the "| ssh" pipeline operator, which left stdin open and hung
+# waiting for more input) to a remote "powershell -Command -", which has no length limit.
 function SSH-RunScriptT($ip, $psScript, $timeoutSec = 25) {
     $u = Login-For $ip
     $job = $null
     try {
         $job = Start-Job -ScriptBlock {
             param($u, $ip, $psScript)
-            try { $psScript | & ssh -o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes "$u@$ip" 'powershell -NoProfile -Command -' 2>&1 | Out-String }
-            catch { $null }
+            try {
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = 'ssh'
+                $psi.Arguments = "-o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes $u@$ip `"powershell -NoProfile -Command -`""
+                $psi.RedirectStandardInput = $true
+                $psi.RedirectStandardOutput = $true
+                $psi.RedirectStandardError = $true
+                $psi.UseShellExecute = $false
+                $psi.CreateNoWindow = $true
+                $proc = New-Object System.Diagnostics.Process
+                $proc.StartInfo = $psi
+                # Read stdout/stderr asynchronously (event-driven) rather than ReadToEnd() -
+                # reading them one after another can deadlock if both fill their OS pipe
+                # buffer at the same time (a classic .NET Process gotcha).
+                $outSb = New-Object System.Text.StringBuilder
+                $errSb = New-Object System.Text.StringBuilder
+                $outEvt = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action { if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $outSb
+                $errEvt = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action { if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $errSb
+                try {
+                    [void]$proc.Start()
+                    $proc.BeginOutputReadLine()
+                    $proc.BeginErrorReadLine()
+                    $proc.StandardInput.Write($psScript)
+                    $proc.StandardInput.Close()
+                    [void]$proc.WaitForExit(20000)
+                } finally {
+                    Unregister-Event -SourceIdentifier $outEvt.Name -EA SilentlyContinue
+                    Unregister-Event -SourceIdentifier $errEvt.Name -EA SilentlyContinue
+                    Remove-Job $outEvt -Force -EA SilentlyContinue
+                    Remove-Job $errEvt -Force -EA SilentlyContinue
+                }
+                return ($outSb.ToString() + "`n" + $errSb.ToString())
+            } catch { $null }
         } -ArgumentList $u, $ip, $psScript
         if (Wait-Job $job -Timeout $timeoutSec) {
             return (Receive-Job $job -EA SilentlyContinue)
