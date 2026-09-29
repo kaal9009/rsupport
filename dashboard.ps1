@@ -82,6 +82,27 @@ function SSH-Fire($ip, $cmd, $times = 1) {
     }
 }
 function Enc($ps) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps)) }
+# Manual JSON string escaper - used instead of ConvertTo-Json for the app-scan data path.
+# ConvertTo-Json has a version-specific quirk (seen on PowerShell 5.1 with larger arrays of
+# PSCustomObjects) where it can serialize an array of objects as a single columnar object
+# (each property becomes an array of ALL items' values) instead of an array of objects.
+# Building the JSON by hand here removes that whole bug class for this feature.
+function JEsc($s) {
+    if ($null -eq $s) { return '' }
+    $s = [string]$s
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $s.ToCharArray()) {
+        $code = [int]$ch
+        if ($ch -eq '\') { [void]$sb.Append('\\') }
+        elseif ($ch -eq '"') { [void]$sb.Append('\"') }
+        elseif ($code -eq 13) { continue }
+        elseif ($code -eq 10) { [void]$sb.Append('\n') }
+        elseif ($code -eq 9) { [void]$sb.Append('\t') }
+        elseif ($code -lt 32) { continue }
+        else { [void]$sb.Append($ch) }
+    }
+    return $sb.ToString()
+}
 # Timeout-protected SSH call - used for anything that reads data back from the client
 # (scan, blocked-list, block/unblock). A slow or half-dead client can otherwise hang
 # the SSH call forever and freeze the whole single-threaded dashboard. Runs the SSH
@@ -281,6 +302,22 @@ function Scan-Apps($ip) {
     # uninstall command (Uninstall feature) and caps the list so a huge Programs folder
     # can't make the scan crawl.
     $ps = @'
+function JEsc($s){
+  if($null -eq $s){ return '' }
+  $s=[string]$s
+  $sb=New-Object System.Text.StringBuilder
+  foreach($ch in $s.ToCharArray()){
+    $c=[int]$ch
+    if($ch -eq '\'){ [void]$sb.Append('\\') }
+    elseif($ch -eq '"'){ [void]$sb.Append('\"') }
+    elseif($c -eq 13){ continue }
+    elseif($c -eq 10){ [void]$sb.Append('\n') }
+    elseif($c -eq 9){ [void]$sb.Append('\t') }
+    elseif($c -lt 32){ continue }
+    else{ [void]$sb.Append($ch) }
+  }
+  $sb.ToString()
+}
 $out=New-Object System.Collections.ArrayList
 try{
   $sh=$null; try{$sh=New-Object -ComObject WScript.Shell}catch{}
@@ -316,7 +353,18 @@ try{
   $named = @($out | Where-Object { -not $_.exe -and $_.name })
   $final = @($map.Values) + $named
   if($final.Count -gt 400){ $final = $final | Select-Object -First 400 }
-  ConvertTo-Json -InputObject $final -Compress
+  $sb=New-Object System.Text.StringBuilder
+  [void]$sb.Append('[')
+  $first=$true
+  foreach($a in $final){
+    try{
+      if(-not $first){ [void]$sb.Append(',') }
+      $first=$false
+      [void]$sb.Append('{"name":"'); [void]$sb.Append((JEsc $a.name)); [void]$sb.Append('","exe":"'); [void]$sb.Append((JEsc $a.exe)); [void]$sb.Append('","uninst":"'); [void]$sb.Append((JEsc $a.uninst)); [void]$sb.Append('"}')
+    }catch{}
+  }
+  [void]$sb.Append(']')
+  $sb.ToString()
 }catch{ '[]' }
 '@
     $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 25
@@ -337,14 +385,22 @@ function Get-AppScan($ip, $force) {
     if ($rawApps) {
         try {
             $parsed = @($rawApps | ConvertFrom-Json)
-            $clean = @()
+            $sb = New-Object System.Text.StringBuilder
+            [void]$sb.Append('[')
+            $first = $true
             foreach ($a in $parsed) {
                 if (-not $a) { continue }
-                $exe = ('' + $a.exe).ToLower()
-                if ($exe -and $a.uninst) { $uninstMap[$exe] = ('' + $a.uninst) }
-                $clean += [pscustomobject]@{ name = $a.name; exe = $exe; un = $(if ($a.uninst) { 1 } else { 0 }) }
+                try {
+                    $exe = ('' + $a.exe).ToLower()
+                    if ($exe -and $a.uninst) { $uninstMap[$exe] = ('' + $a.uninst) }
+                    $un = $(if ($a.uninst) { 1 } else { 0 })
+                    if (-not $first) { [void]$sb.Append(',') }
+                    $first = $false
+                    [void]$sb.Append('{"name":"'); [void]$sb.Append((JEsc $a.name)); [void]$sb.Append('","exe":"'); [void]$sb.Append((JEsc $exe)); [void]$sb.Append('","un":'); [void]$sb.Append($un); [void]$sb.Append('}')
+                } catch {}
             }
-            $appsOut = (ConvertTo-Json -InputObject $clean -Compress)
+            [void]$sb.Append(']')
+            $appsOut = $sb.ToString()
         } catch { $appsOut = '[]' }
     } else {
         $failed = $true
@@ -362,7 +418,17 @@ function Get-Blocked($ip) {
 $k="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
 $b=@()
 try{ if(Test-Path $k){ Get-ChildItem $k -EA SilentlyContinue | ForEach-Object { try{ if((Get-ItemProperty $_.PSPath -EA SilentlyContinue).Debugger){ $b+=$_.PSChildName.ToLower() } }catch{} } } }catch{}
-ConvertTo-Json -InputObject $b -Compress
+$sb=New-Object System.Text.StringBuilder
+[void]$sb.Append('[')
+$first=$true
+foreach($x in $b){
+  if(-not $first){ [void]$sb.Append(',') }
+  $first=$false
+  $e=([string]$x).Replace('\','\\').Replace('"','\"')
+  [void]$sb.Append('"'); [void]$sb.Append($e); [void]$sb.Append('"')
+}
+[void]$sb.Append(']')
+$sb.ToString()
 '@
     $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 12
     if (-not $r) { return $null }
