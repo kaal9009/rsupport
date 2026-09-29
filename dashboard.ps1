@@ -1140,7 +1140,21 @@ load();setInterval(load,8000);setInterval(ping,3000);setInterval(function(){if(s
 $listener = New-Object System.Net.HttpListener
 $prefix = "http://127.0.0.1:$port/"
 $listener.Prefixes.Add($prefix)
-try { $listener.Start() } catch { Write-Host "Could not start on $prefix - maybe already running?"; exit }
+# The port may still be held for a moment by the previous instance shutting down (or by a
+# leftover process DASHBOARD.bat hasn't cleared yet) - retry a few times before giving up,
+# instead of exiting on the very first failed bind. This is what used to make the dashboard
+# get stuck in a start/crash loop instead of just coming up a couple seconds later.
+$started = $false
+for ($i = 0; $i -lt 5 -and -not $started; $i++) {
+    try { $listener.Start(); $started = $true }
+    catch {
+        if ($i -eq 0) {
+            try { Get-NetTCPConnection -LocalPort $port -State Listen -EA SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -EA SilentlyContinue } } catch {}
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+if (-not $started) { Write-Host "Could not start on $prefix after several tries - another program may be holding port $port."; exit }
 Write-Host "Dashboard running at $prefix   (close this window to stop)"
 Start-Process $prefix
 try { Push-Names } catch {}   # push friendly names to clients so Telegram alerts use them
