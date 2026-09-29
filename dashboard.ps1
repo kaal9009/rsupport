@@ -289,7 +289,7 @@ function Get-Blocked($ip) {
 $k="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
 $b=@()
 if(Test-Path $k){ Get-ChildItem $k -EA 0 | ForEach-Object { if((Get-ItemProperty $_.PSPath -EA 0).Debugger){ $b+=$_.PSChildName.ToLower() } } }
-$b | ConvertTo-Json -Compress
+ConvertTo-Json -InputObject $b -Compress
 '@
     $r = SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     return $r.Trim()
@@ -867,7 +867,8 @@ function showAppModal(apps,bset,pset,cname,ip){
   let o=document.getElementById('appWrap');if(o)o.remove();
   o=document.createElement('div');o.id='appWrap';o.dataset.ip=ip;
   o.style.cssText='position:fixed;left:50%;top:40px;transform:translateX(-50%);width:580px;max-width:94%;max-height:82vh;overflow:auto;background:#161d2e;border:1px solid #395182;border-radius:12px;padding:18px;z-index:9999;box-shadow:0 10px 40px rgba(0,0,0,.6)';
-  const bl=apps.filter(a=>bset.has((a.exe||'').toLowerCase()));
+  const appMap=new Map(apps.map(a=>[(a.exe||'').toLowerCase(),a]));
+  const bl=[...bset].map(exe=>appMap.get(exe)||{name:exe,exe:exe});
   const rest=apps.filter(a=>!bset.has((a.exe||'').toLowerCase()));
   let head='';
   if(bl.length){head='<div style="font-size:12px;color:#e0868f;font-weight:600;margin:4px 0 6px">Blocked ('+bl.length+')</div>'+bl.map(a=>appRow(a.name,(a.exe||'').toLowerCase(),true,false)).join('')+'<div style="font-size:12px;color:#8fa0c0;font-weight:600;margin:14px 0 6px">All apps</div>';}
