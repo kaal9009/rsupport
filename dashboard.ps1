@@ -82,6 +82,31 @@ function SSH-Fire($ip, $cmd, $times = 1) {
     }
 }
 function Enc($ps) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps)) }
+# Timeout-protected SSH call - used for anything that reads data back from the client
+# (scan, blocked-list, block/unblock). A slow or half-dead client can otherwise hang
+# the SSH call forever and freeze the whole single-threaded dashboard. Runs the SSH
+# call in a background job and kills it if it doesn't answer within $timeoutSec.
+# Returns $null on timeout/failure (never throws), so callers can detect it and retry.
+function SSH-RunT($ip, $cmd, $timeoutSec = 15) {
+    $u = Login-For $ip
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+            param($u, $ip, $cmd)
+            try { & ssh -o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes "$u@$ip" $cmd 2>&1 | Out-String }
+            catch { $null }
+        } -ArgumentList $u, $ip, $cmd
+        if (Wait-Job $job -Timeout $timeoutSec) {
+            return (Receive-Job $job -EA SilentlyContinue)
+        } else {
+            return $null
+        }
+    } catch {
+        return $null
+    } finally {
+        if ($job) { Stop-Job $job -EA SilentlyContinue; Remove-Job $job -Force -EA SilentlyContinue }
+    }
+}
 
 function Upgrade-All {
     $ips = Get-Clients
@@ -250,27 +275,52 @@ function Clear-AutoLogin($ip) {
 }
 
 function Scan-Apps($ip) {
+    # Every step is wrapped so one bad shortcut/registry entry can never abort the whole
+    # scan - worst case that one entry is skipped. Always prints valid JSON, even '[]' on
+    # total failure, so the dashboard never gets garbage to parse. Also captures each app's
+    # uninstall command (Uninstall feature) and caps the list so a huge Programs folder
+    # can't make the scan crawl.
     $ps = @'
-$sh=New-Object -ComObject WScript.Shell
-$paths=@("$env:ProgramData\Microsoft\Windows\Start Menu\Programs","$env:APPDATA\Microsoft\Windows\Start Menu\Programs")
-$apps=@()
-foreach($p in $paths){ if(Test-Path $p){ Get-ChildItem $p -Recurse -Filter *.lnk -EA 0 | ForEach-Object { $t=$sh.CreateShortcut($_.FullName).TargetPath; if($t -and $t -match '\.exe$'){ $apps+=[pscustomobject]@{name=$_.BaseName;exe=([IO.Path]::GetFileName($t)).ToLower()} } } } }
-$ukeys=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')
-foreach($k in $ukeys){ Get-ItemProperty $k -EA 0 | ForEach-Object {
-  if($_.DisplayName){
-    $found=$false
-    if($_.DisplayIcon){
-      $ic=($_.DisplayIcon -split ',')[0].Trim('"')
-      if($ic -match '\.exe$' -and (Test-Path $ic -EA 0)){ $apps+=[pscustomobject]@{name=$_.DisplayName;exe=([IO.Path]::GetFileName($ic)).ToLower()}; $found=$true }
-    }
-    if(-not $found -and $_.InstallLocation -and (Test-Path $_.InstallLocation -EA 0)){
-      Get-ChildItem $_.InstallLocation -Filter *.exe -EA 0 | Select-Object -First 5 | ForEach-Object { $apps+=[pscustomobject]@{name=$_.BaseName;exe=$_.Name.ToLower()} }
-    }
+$out=New-Object System.Collections.ArrayList
+try{
+  $sh=$null; try{$sh=New-Object -ComObject WScript.Shell}catch{}
+  if($sh){
+    $paths=@("$env:ProgramData\Microsoft\Windows\Start Menu\Programs","$env:APPDATA\Microsoft\Windows\Start Menu\Programs")
+    foreach($p in $paths){ try{ if(Test-Path $p){ Get-ChildItem $p -Recurse -Filter *.lnk -EA SilentlyContinue | ForEach-Object {
+      try{ $t=$sh.CreateShortcut($_.FullName).TargetPath; if($t -and $t -match '\.exe$'){ [void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=([IO.Path]::GetFileName($t)).ToLower();uninst=''}) } }catch{}
+    } } }catch{} }
   }
-}}
-$apps | Where-Object { $_.exe } | Sort-Object exe -Unique | ConvertTo-Json -Compress
+}catch{}
+try{
+  $ukeys=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')
+  foreach($k in $ukeys){ try{ Get-ItemProperty $k -EA SilentlyContinue | ForEach-Object {
+    try{
+      if($_.DisplayName){
+        $un=''; if($_.QuietUninstallString){$un=$_.QuietUninstallString}elseif($_.UninstallString){$un=$_.UninstallString}
+        $found=$false
+        if($_.DisplayIcon){
+          $ic=($_.DisplayIcon -split ',')[0].Trim('"')
+          if($ic -match '\.exe$' -and (Test-Path $ic -EA SilentlyContinue)){ [void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe=([IO.Path]::GetFileName($ic)).ToLower();uninst=$un}); $found=$true }
+        }
+        if((-not $found) -and $_.InstallLocation -and (Test-Path $_.InstallLocation -EA SilentlyContinue)){
+          Get-ChildItem $_.InstallLocation -Filter *.exe -EA SilentlyContinue | Select-Object -First 5 | ForEach-Object { [void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=$_.Name.ToLower();uninst=$un}); $found=$true }
+        }
+        if((-not $found) -and $un){ [void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe='';uninst=$un}) }
+      }
+    }catch{}
+  } }catch{} }
+}catch{}
+try{
+  $map=@{}
+  foreach($a in $out){ if($a.exe){ if(-not $map.ContainsKey($a.exe) -or (-not $map[$a.exe].uninst -and $a.uninst)){ $map[$a.exe]=$a } } }
+  $named = @($out | Where-Object { -not $_.exe -and $_.name })
+  $final = @($map.Values) + $named
+  if($final.Count -gt 400){ $final = $final | Select-Object -First 400 }
+  ConvertTo-Json -InputObject $final -Compress
+}catch{ '[]' }
 '@
-    $r = SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
+    $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 25
+    if (-not $r) { return $null }
     return $r.Trim()
 }
 $script:appScanCache = @{}
@@ -280,18 +330,42 @@ function Get-AppScan($ip, $force) {
         $c = $script:appScanCache[$ip]
         if (($now - $c.time).TotalSeconds -lt 600) { return $c }
     }
-    $entry = @{ time = $now; apps = (Scan-Apps $ip); blocked = (Get-Blocked $ip); blockmsg = (Get-BlockMsg $ip) }
-    $script:appScanCache[$ip] = $entry
+    $rawApps = Scan-Apps $ip
+    $uninstMap = @{}
+    $appsOut = '[]'
+    $failed = $false
+    if ($rawApps) {
+        try {
+            $parsed = @($rawApps | ConvertFrom-Json)
+            $clean = @()
+            foreach ($a in $parsed) {
+                if (-not $a) { continue }
+                $exe = ('' + $a.exe).ToLower()
+                if ($exe -and $a.uninst) { $uninstMap[$exe] = ('' + $a.uninst) }
+                $clean += [pscustomobject]@{ name = $a.name; exe = $exe; un = $(if ($a.uninst) { 1 } else { 0 }) }
+            }
+            $appsOut = (ConvertTo-Json -InputObject $clean -Compress)
+        } catch { $appsOut = '[]' }
+    } else {
+        $failed = $true
+    }
+    $blk = Get-Blocked $ip
+    if ($blk -eq $null) { $failed = $true; $blk = '[]' }
+    $entry = @{ time = $now; apps = $appsOut; blocked = $blk; blockmsg = (Get-BlockMsg $ip); uninstMap = $uninstMap; failed = $failed }
+    # Don't cache a failed scan - so the very next try re-scans instead of repeating
+    # the same empty result for 10 minutes.
+    if (-not $failed) { $script:appScanCache[$ip] = $entry }
     return $entry
 }
 function Get-Blocked($ip) {
     $ps = @'
 $k="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
 $b=@()
-if(Test-Path $k){ Get-ChildItem $k -EA 0 | ForEach-Object { if((Get-ItemProperty $_.PSPath -EA 0).Debugger){ $b+=$_.PSChildName.ToLower() } } }
+try{ if(Test-Path $k){ Get-ChildItem $k -EA SilentlyContinue | ForEach-Object { try{ if((Get-ItemProperty $_.PSPath -EA SilentlyContinue).Debugger){ $b+=$_.PSChildName.ToLower() } }catch{} } } }catch{}
 ConvertTo-Json -InputObject $b -Compress
 '@
-    $r = SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
+    $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 12
+    if (-not $r) { return $null }
     return $r.Trim()
 }
 $blockHta = @'
@@ -357,9 +431,15 @@ Stop-Process -Name '$base' -Force -EA 0
 taskkill /IM '$exe' /F /T 2>`$null
 (Get-ItemProperty `$k -EA 0).Debugger
 "@
-    $r = (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))).Trim()
+    $enc = Enc $ps
+    $r = $null
+    for ($i = 0; $i -lt 3 -and -not $r; $i++) {
+        $out = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + $enc) 15
+        if ($out) { $r = $out.Trim() }
+        if (-not $r) { Start-Sleep -Milliseconds 500 }
+    }
     $script:appScanCache.Remove($ip)
-    if (-not $r) { return "Could not confirm the block took effect on $exe - check the connection to this client and try again." }
+    if (-not $r) { return "Could not confirm the block took effect on $exe - the client may be slow/offline right now. Try again in a moment." }
     return "Blocked $exe (and closed it if running)"
 }
 function Set-BlockMsg($ip, $msg) {
@@ -386,23 +466,65 @@ Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Exe
     }
 }
 function Get-BlockMsg($ip) {
-    $r = SSH-Run $ip 'cmd /c type C:\ProgramData\RemoteSupport\block-msg.txt 2>NUL'
+    $r = SSH-RunT $ip 'cmd /c type C:\ProgramData\RemoteSupport\block-msg.txt 2>NUL' 8
+    if (-not $r) { return '' }
     return ($r.Trim())
 }
 function Unblock-App($ip, $exe) {
     $exe = ($exe -replace '[^\w\.\-]', '').ToLower()
+    if (-not $exe) { return "bad name" }
     $ps = @"
-Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe" -Recurse -Force -EA 0
+`$k="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe"
+Remove-Item `$k -Recurse -Force -EA 0
+if(Test-Path `$k){'STILL_THERE'}else{'GONE'}
 "@
-    SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
+    $enc = Enc $ps
+    $r = $null
+    for ($i = 0; $i -lt 3 -and $r -ne 'GONE'; $i++) {
+        $out = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + $enc) 15
+        if ($out) { $r = $out.Trim() }
+        if ($r -ne 'GONE') { Start-Sleep -Milliseconds 500 }
+    }
     $script:appScanCache.Remove($ip)
+    if ($r -ne 'GONE') { return "Could not confirm $exe was unblocked - the client may be slow/offline right now. Try again in a moment." }
     return "Unblocked $exe"
+}
+function Uninstall-App($ip, $exe) {
+    $exe = ($exe -replace '[^\w\.\-]', '').ToLower()
+    if (-not $exe) { return "bad name" }
+    if ($protectedApps -contains $exe) { return "PROTECTED: $exe can't be uninstalled - it's one of your own access tools." }
+    $c = $script:appScanCache[$ip]
+    $un = $null
+    if ($c -and $c.uninstMap -and $c.uninstMap.ContainsKey($exe)) { $un = $c.uninstMap[$exe] }
+    if (-not $un) {
+        # cache may be missing/stale - rescan once before giving up
+        $null = Get-AppScan $ip $true
+        $c = $script:appScanCache[$ip]
+        if ($c -and $c.uninstMap -and $c.uninstMap.ContainsKey($exe)) { $un = $c.uninstMap[$exe] }
+    }
+    if (-not $un) { return "No uninstaller found for $exe - it may not be a properly installed program. Remove it manually from Settings > Apps on that PC." }
+    $unB64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($un))
+    # Write the real uninstall command into a .bat file on the client and launch it, rather
+    # than trying to re-quote it ourselves - registry uninstall strings are already in a
+    # form meant to run as-is from a command line, and this sidesteps quoting bugs entirely.
+    $ps = @"
+`$u=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$unB64'))
+if(`$u -match '(?i)msiexec' -and `$u -notmatch '(?i)/q'){ `$u = `$u + ' /quiet /norestart' }
+`$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null
+`$bat=Join-Path `$d 'uninst_tmp.bat'
+Set-Content -Path `$bat -Value ("@echo off`r`n"+`$u) -Encoding ascii
+Start-Process `$bat -WindowStyle Hidden
+"@
+    SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
+    $script:appScanCache.Remove($ip)
+    return "Uninstall started for $exe - if it needs confirmation, that'll show on the client's screen."
 }
 function Blocked-All {
     $out = @()
     foreach ($c in (Get-Clients)) {
         if (-not $c.online) { continue }
-        $raw = (Get-Blocked $c.ip).Trim()
+        $rawB = Get-Blocked $c.ip
+        $raw = if ($rawB) { $rawB.Trim() } else { '' }
         $list = @()
         if ($raw) { try { $p = $raw | ConvertFrom-Json; if ($p -is [string]) { $list = @($p) } else { $list = @($p) } } catch {} }
         if ($list.Count) { $out += [pscustomobject]@{ name = $c.name; ip = $c.ip; blocked = $list } }
@@ -845,25 +967,28 @@ async function appMgr(force){
   const ip=sel.ip;
   if(!force && appCache[ip]){showAppModal(appCache[ip].apps,new Set(appCache[ip].blocked),new Set(appCache[ip].prot),sel.name,ip);return;}
   const o=document.getElementById('out');if(o)o.textContent='Scanning apps on '+sel.name+' ...';
-  let apps=[],blocked=[],prot=[],bmsg='';
+  let apps=[],blocked=[],prot=[],bmsg='',failed=false;
   try{const r=await fetch('/api/appscan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,force:!!force})});const j=await r.json();
-    apps=JSON.parse(j.apps||'[]');blocked=JSON.parse(j.blocked||'[]');prot=(j.protected||'').split(',');bmsg=j.blockmsg||'';}catch(e){if(o)o.textContent='Scan failed: '+e;return;}
+    apps=JSON.parse(j.apps||'[]');blocked=JSON.parse(j.blocked||'[]');prot=(j.protected||'').split(',');bmsg=j.blockmsg||'';failed=!!j.failed;}catch(e){if(o)o.textContent='Scan failed: '+e;alert('Scan failed - no response from '+sel.name+'. Check the client is online and try Rescan.');return;}
   if(!Array.isArray(apps))apps=apps?[apps]:[];
   if(!Array.isArray(blocked))blocked=blocked?[blocked]:[];
   blocked=blocked.map(x=>(''+x).toLowerCase());prot=prot.map(x=>(''+x).toLowerCase());
   appCache[ip]={apps,blocked,prot,msg:bmsg};
-  if(o)o.textContent='Ready.';
-  showAppModal(apps,new Set(blocked),new Set(prot),sel.name,ip);
+  if(failed){if(o)o.textContent='Scan timed out - showing what we could get.';}
+  else if(o)o.textContent='Ready.';
+  showAppModal(apps,new Set(blocked),new Set(prot),sel.name,ip,failed);
 }
-function appRow(name,exe,blocked,prot){
+function appRow(name,exe,blocked,prot,uninst){
   let right;
   if(prot) right='<span style="font-size:11px;color:#6f7ea0;border:1px solid #2c3752;border-radius:6px;padding:6px 10px">Protected</span>';
   else if(blocked) right='<button onclick="appToggle(this,\''+exe+'\',false)" style="padding:6px 12px;border-radius:6px;border:1px solid #2e7d46;background:#173d26;color:#8fe0a8;cursor:pointer;font-size:12px">Blocked \u2713 unblock</button>';
   else right='<button onclick="appToggle(this,\''+exe+'\',true)" style="padding:6px 12px;border-radius:6px;border:1px solid #7a3a42;background:#241a1d;color:#e0868f;cursor:pointer;font-size:12px">Block</button>';
+  let un='';
+  if(!prot && uninst){un='<button onclick="appUninstall(this,\''+exe+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid #7a5a2e;background:#2a2016;color:#e0b86f;cursor:pointer;font-size:12px;margin-left:6px">Uninstall</button>';}
   return '<div class="appRow" data-exe="'+exe+'" data-name="'+(name||'').toLowerCase()+'" style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #1d2537;'+(blocked?'background:#1c1417;':'')+'">'+
-    '<div style="flex:1"><div class="appName" style="font-size:13px;color:#eef2f8">'+esc(name)+'</div><div style="font-size:11px;color:#7d8aa5">'+esc(exe)+'</div></div>'+right+'</div>';
+    '<div style="flex:1"><div class="appName" style="font-size:13px;color:#eef2f8">'+esc(name)+'</div><div style="font-size:11px;color:#7d8aa5">'+esc(exe)+'</div></div>'+right+un+'</div>';
 }
-function showAppModal(apps,bset,pset,cname,ip){
+function showAppModal(apps,bset,pset,cname,ip,failed){
   let o=document.getElementById('appWrap');if(o)o.remove();
   o=document.createElement('div');o.id='appWrap';o.dataset.ip=ip;
   o.style.cssText='position:fixed;left:50%;top:40px;transform:translateX(-50%);width:580px;max-width:94%;max-height:82vh;overflow:auto;background:#161d2e;border:1px solid #395182;border-radius:12px;padding:18px;z-index:9999;box-shadow:0 10px 40px rgba(0,0,0,.6)';
@@ -871,13 +996,15 @@ function showAppModal(apps,bset,pset,cname,ip){
   const bl=[...bset].map(exe=>appMap.get(exe)||{name:exe,exe:exe});
   const rest=apps.filter(a=>!bset.has((a.exe||'').toLowerCase()));
   let head='';
-  if(bl.length){head='<div style="font-size:12px;color:#e0868f;font-weight:600;margin:4px 0 6px">Blocked ('+bl.length+')</div>'+bl.map(a=>appRow(a.name,(a.exe||'').toLowerCase(),true,false)).join('')+'<div style="font-size:12px;color:#8fa0c0;font-weight:600;margin:14px 0 6px">All apps</div>';}
-  let rows=rest.map(a=>{const ex=(a.exe||'').toLowerCase();return appRow(a.name,ex,false,pset.has(ex));}).join('');
+  if(bl.length){head='<div style="font-size:12px;color:#e0868f;font-weight:600;margin:4px 0 6px">Blocked ('+bl.length+')</div>'+bl.map(a=>appRow(a.name,(a.exe||'').toLowerCase(),true,false,a.un===1)).join('')+'<div style="font-size:12px;color:#8fa0c0;font-weight:600;margin:14px 0 6px">All apps</div>';}
+  let rows=rest.map(a=>{const ex=(a.exe||'').toLowerCase();return appRow(a.name,ex,false,pset.has(ex),a.un===1);}).join('');
+  let warn=failed?'<div style="font-size:11.5px;color:#e0b86f;background:#2a2016;border:1px solid #7a5a2e;border-radius:6px;padding:8px 10px;margin-bottom:10px">This client was slow to answer, so the list below may be incomplete. Hit Rescan to try a full scan again.</div>':'';
   o.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div style="font-size:15px;color:#fff;font-weight:600">Block apps on '+esc(cname)+'</div>'+
     '<button onclick="appMgr(true)" style="margin-left:auto;background:none;border:1px solid #2c3752;color:#9fb0d0;border-radius:6px;padding:5px 10px;cursor:pointer">Rescan</button>'+
     '<button onclick="fleetBlocked()" style="background:none;border:1px solid #395182;color:#9dc3ff;border-radius:6px;padding:5px 10px;cursor:pointer">All clients</button>'+
     '<button onclick="document.getElementById(\'appWrap\').remove()" style="background:none;border:1px solid #2c3752;color:#9fb0d0;border-radius:6px;padding:5px 10px;cursor:pointer">Close</button></div>'+
-    '<div style="font-size:11px;color:#7d8aa5;margin-bottom:10px">Blocked apps won\'t open, survive reinstall, and can\'t be bypassed by a normal user. Protected apps (your access tools) can\'t be blocked.</div>'+
+    '<div style="font-size:11px;color:#7d8aa5;margin-bottom:10px">Blocked apps won\'t open, survive reinstall, and can\'t be bypassed by a normal user. Protected apps (your access tools) can\'t be blocked. Uninstall runs the app\'s real uninstaller on that PC.</div>'+
+    warn+
     '<div style="background:#141b2b;border:1px solid #263148;border-radius:8px;padding:10px;margin-bottom:12px"><div style="font-size:12px;color:#8fa0c0;margin-bottom:6px">Message shown when a blocked app is opened (leave empty = silent, nothing happens):</div>'+
     '<div style="display:flex;gap:6px"><input id="blockMsg" placeholder="e.g. This app is blocked. Do not use - contact IT." value="'+((appCache[ip]&&appCache[ip].msg)||'').replace(/"/g,"&quot;")+'" style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:12.5px"><button onclick="saveBlockMsg()" style="padding:8px 14px;border-radius:6px;border:1px solid #295596;background:#1c3a6b;color:#fff;cursor:pointer;font-size:12.5px">Save message</button></div></div>'+
     '<input id="appSearch" placeholder="Filter apps..." oninput="appFilter()" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #2c3752;background:#0f1420;color:#e6eaf2;font-size:13px;margin-bottom:10px">'+
@@ -888,11 +1015,21 @@ function showAppModal(apps,bset,pset,cname,ip){
 async function appToggle(btn,exe,block){
   const ip=document.getElementById('appWrap').dataset.ip;
   const um=((document.getElementById('blockMsg')||{}).value||'').trim().length>0;
+  const prevText=btn.textContent;
   btn.disabled=true;btn.textContent=block?'Blocking...':'Unblocking...';
   let msg='';try{const r=await fetch(block?'/api/appblock':'/api/appunblock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,exe,usemsg:um})});msg=(await r.json()).output||'';}catch(e){}
-  if(block&&msg.indexOf('Blocked ')!==0){alert(msg||'Block failed - no response from client.');btn.disabled=false;btn.textContent='Block';return;}
+  const ok=block?(msg.indexOf('Blocked ')===0):(msg.indexOf('Unblocked ')===0);
+  if(!ok){alert(msg||((block?'Block':'Unblock')+' failed - no response from client. Try again.'));btn.disabled=false;btn.textContent=prevText;return;}
   if(appCache[ip]){const s=new Set(appCache[ip].blocked);if(block)s.add(exe);else s.delete(exe);appCache[ip].blocked=[...s];
     showAppModal(appCache[ip].apps,s,new Set(appCache[ip].prot),clients.find(c=>c.ip===ip)?.name||'',ip);}
+}
+async function appUninstall(btn,exe){
+  if(!confirm('Uninstall '+exe+' on this PC?\n\nThis launches the app\'s real uninstaller on the client - it may show a confirmation window there.'))return;
+  const ip=document.getElementById('appWrap').dataset.ip;
+  btn.disabled=true;btn.textContent='Uninstalling...';
+  let msg='';try{const r=await fetch('/api/appuninstall',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,exe})});msg=(await r.json()).output||'';}catch(e){}
+  alert(msg||'No response from client.');
+  btn.disabled=false;btn.textContent='Uninstall';
 }
 async function saveBlockMsg(){
   const ip=document.getElementById('appWrap').dataset.ip;const v=(document.getElementById('blockMsg').value||'').trim();
@@ -1053,10 +1190,11 @@ while ($true) {
             $b = Body $ctx; Send $ctx (@{ output = (Do-Action $b.ip $b.action) } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/blockedall') { Send $ctx (@{ data = (Blocked-All) } | ConvertTo-Json -Compress) 'application/json' }
-        elseif ($path -eq '/api/appscan') { $b = Body $ctx; $c = Get-AppScan $b.ip ([bool]$b.force); Send $ctx (@{ apps = $c.apps; blocked = $c.blocked; protected = ($protectedApps -join ','); blockmsg = $c.blockmsg } | ConvertTo-Json -Compress) 'application/json' }
+        elseif ($path -eq '/api/appscan') { $b = Body $ctx; $c = Get-AppScan $b.ip ([bool]$b.force); Send $ctx (@{ apps = $c.apps; blocked = $c.blocked; protected = ($protectedApps -join ','); blockmsg = $c.blockmsg; failed = [bool]$c.failed } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/appblock') { $b = Body $ctx; Send $ctx (@{ output = (Block-App $b.ip $b.exe $b.usemsg) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/blockmsg') { $b = Body $ctx; Send $ctx (@{ output = (Set-BlockMsg $b.ip $b.msg) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/appunblock') { $b = Body $ctx; Send $ctx (@{ output = (Unblock-App $b.ip $b.exe) } | ConvertTo-Json -Compress) 'application/json' }
+        elseif ($path -eq '/api/appuninstall') { $b = Body $ctx; Send $ctx (@{ output = (Uninstall-App $b.ip $b.exe) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/autologin') { $b = Body $ctx; Send $ctx (@{ output = (Set-AutoLogin $b.ip $b.pass) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/autologinoff') { $b = Body $ctx; Send $ctx (@{ output = (Clear-AutoLogin $b.ip) } | ConvertTo-Json -Compress) 'application/json' }
         elseif ($path -eq '/api/setuplink') { Send $ctx (@{ link = $setupLink } | ConvertTo-Json -Compress) 'application/json' }
