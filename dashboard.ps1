@@ -479,8 +479,8 @@ function Do-Action($ip, $action) {
             Start-Process $rd "--connect $ip"
             return "Opening RustDesk to $ip. If it asks for a password, type: Support@2026!  (If nothing opens, type $ip into RustDesk's box and Connect.)"
         }
-        'restart'  { SSH-Fire $ip 'shutdown /r /t 0' 2; return "Restart sent." }
-        'shutdown' { SSH-Fire $ip 'shutdown /s /t 0' 2; return "Shutdown sent." }
+        'restart'  { SSH-Fire $ip 'shutdown /r /t 0 /f' 2; return "Restart sent." }
+        'shutdown' { SSH-Fire $ip 'shutdown /s /t 0 /f' 2; return "Shutdown sent." }
         'stoprestart' {
             # "Fake shutdown -> restart in 5 min". Time-critical, so everything is
             # fire-and-forget (never wait for an SSH reply).
