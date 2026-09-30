@@ -1089,10 +1089,23 @@ async function appToggle(btn,exe,block){
 async function appUninstall(btn,exe){
   if(!confirm('Uninstall '+exe+' on this PC?\n\nThis runs the app\'s real uninstaller on the client silently (no window on their screen), where that installer supports it.'))return;
   const ip=document.getElementById('appWrap').dataset.ip;
+  const cname=(clients.find(c=>c.ip===ip)||{}).name||'';
   btn.disabled=true;btn.textContent='Uninstalling...';
   let msg='';try{const r=await fetch('/api/appuninstall',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,exe})});msg=(await r.json()).output||'';}catch(e){}
-  alert(msg||'No response from client.');
-  btn.disabled=false;btn.textContent='Uninstall';
+  if(!/started/i.test(msg)){alert(msg||'No response from client.');btn.disabled=false;btn.textContent='Uninstall';return;}
+  btn.textContent='Verifying...';
+  await new Promise(res=>setTimeout(res,15000));
+  let stillThere=true,apps2=[],blocked2=[],prot2=[];
+  try{
+    const r2=await fetch('/api/appscan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,force:true})});
+    const j2=await r2.json();
+    apps2=JSON.parse(j2.apps||'[]');blocked2=JSON.parse(j2.blocked||'[]');prot2=(j2.protected||'').split(',');
+    appCache[ip]={apps:apps2,blocked:blocked2,prot:prot2,msg:j2.blockmsg||''};
+    stillThere=apps2.some(a=>(a.exe||'').toLowerCase()===exe);
+  }catch(e){}
+  if(stillThere){alert(exe+' still shows as installed.\n\nEither the uninstaller needed a click on the client\'s screen, or it just needs more time - try Uninstall or Rescan again in a bit.');}
+  else{alert(exe+' - confirmed uninstalled, it no longer shows up in the scan.');}
+  if(apps2.length||blocked2.length)showAppModal(apps2,new Set(blocked2),new Set(prot2),cname,ip);
 }
 async function saveBlockMsg(){
   const ip=document.getElementById('appWrap').dataset.ip;const v=(document.getElementById('blockMsg').value||'').trim();
