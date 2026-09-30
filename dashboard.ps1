@@ -128,63 +128,6 @@ function SSH-RunT($ip, $cmd, $timeoutSec = 15) {
         if ($job) { Stop-Job $job -EA SilentlyContinue; Remove-Job $job -Force -EA SilentlyContinue }
     }
 }
-# Same idea as SSH-RunT, but for scripts too big to safely pass as a single -EncodedCommand
-# command-line argument (Scan-Apps hit "ssh.exe : The command line is too long" once the
-# script grew past a few KB). Instead the script text is written straight into ssh's stdin
-# via .NET Process (not the "| ssh" pipeline operator, which left stdin open and hung
-# waiting for more input) to a remote "powershell -Command -", which has no length limit.
-function SSH-RunScriptT($ip, $psScript, $timeoutSec = 25) {
-    $u = Login-For $ip
-    $job = $null
-    try {
-        $job = Start-Job -ScriptBlock {
-            param($u, $ip, $psScript)
-            try {
-                $psi = New-Object System.Diagnostics.ProcessStartInfo
-                $psi.FileName = 'ssh'
-                $psi.Arguments = "-o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes $u@$ip `"powershell -NoProfile -Command -`""
-                $psi.RedirectStandardInput = $true
-                $psi.RedirectStandardOutput = $true
-                $psi.RedirectStandardError = $true
-                $psi.UseShellExecute = $false
-                $psi.CreateNoWindow = $true
-                $proc = New-Object System.Diagnostics.Process
-                $proc.StartInfo = $psi
-                # Read stdout/stderr asynchronously (event-driven) rather than ReadToEnd() -
-                # reading them one after another can deadlock if both fill their OS pipe
-                # buffer at the same time (a classic .NET Process gotcha).
-                $outSb = New-Object System.Text.StringBuilder
-                $errSb = New-Object System.Text.StringBuilder
-                $outEvt = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action { if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $outSb
-                $errEvt = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action { if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $errSb
-                try {
-                    [void]$proc.Start()
-                    $proc.BeginOutputReadLine()
-                    $proc.BeginErrorReadLine()
-                    $proc.StandardInput.Write($psScript)
-                    $proc.StandardInput.Close()
-                    [void]$proc.WaitForExit(20000)
-                } finally {
-                    Unregister-Event -SourceIdentifier $outEvt.Name -EA SilentlyContinue
-                    Unregister-Event -SourceIdentifier $errEvt.Name -EA SilentlyContinue
-                    Remove-Job $outEvt -Force -EA SilentlyContinue
-                    Remove-Job $errEvt -Force -EA SilentlyContinue
-                }
-                return ($outSb.ToString() + "`n" + $errSb.ToString())
-            } catch { $null }
-        } -ArgumentList $u, $ip, $psScript
-        if (Wait-Job $job -Timeout $timeoutSec) {
-            return (Receive-Job $job -EA SilentlyContinue)
-        } else {
-            return $null
-        }
-    } catch {
-        return $null
-    } finally {
-        if ($job) { Stop-Job $job -EA SilentlyContinue; Remove-Job $job -Force -EA SilentlyContinue }
-    }
-}
-
 function Upgrade-All {
     $ips = Get-Clients
     $inner = '[Net.ServicePointManager]::SecurityProtocol=''Tls12''; $rp=$env:TEMP+''\ru.ps1''; Invoke-WebRequest ''https://raw.githubusercontent.com/kaal9009/rsupport/main/update.ps1'' -OutFile $rp -UseBasicParsing; Start-Process powershell -WindowStyle Hidden -ArgumentList ''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-File'',$rp'
@@ -357,77 +300,20 @@ function Scan-Apps($ip) {
     # total failure, so the dashboard never gets garbage to parse. Also captures each app's
     # uninstall command (Uninstall feature) and caps the list so a huge Programs folder
     # can't make the scan crawl.
+    # Kept tight/minified on purpose: base64-encoding this onto the SSH command line once
+    # got long enough to hit "ssh.exe : The command line is too long" on the real client
+    # machines (piping it over stdin instead turned out to hang on this setup, so that
+    # route was dropped). Every byte here counts towards that limit, so no comments/spacing
+    # inside the string, and short helper names.
     $ps = @'
-function JEsc($s){
-  if($null -eq $s){ return '' }
-  $s=[string]$s
-  $sb=New-Object System.Text.StringBuilder
-  foreach($ch in $s.ToCharArray()){
-    $c=[int]$ch
-    if($ch -eq '\'){ [void]$sb.Append('\\') }
-    elseif($ch -eq '"'){ [void]$sb.Append('\"') }
-    elseif($c -eq 13){ continue }
-    elseif($c -eq 10){ [void]$sb.Append('\n') }
-    elseif($c -eq 9){ [void]$sb.Append('\t') }
-    elseif($c -lt 32){ continue }
-    else{ [void]$sb.Append($ch) }
-  }
-  $sb.ToString()
-}
-$out=New-Object System.Collections.ArrayList
-try{
-  $sh=$null; try{$sh=New-Object -ComObject WScript.Shell}catch{}
-  if($sh){
-    $paths=@("$env:ProgramData\Microsoft\Windows\Start Menu\Programs","$env:APPDATA\Microsoft\Windows\Start Menu\Programs")
-    foreach($p in $paths){ try{ if(Test-Path $p){ Get-ChildItem $p -Recurse -Filter *.lnk -EA SilentlyContinue | ForEach-Object {
-      try{ $t=$sh.CreateShortcut($_.FullName).TargetPath; if($t -and $t -match '\.exe$'){ [void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=([IO.Path]::GetFileName($t)).ToLower();uninst=''}) } }catch{}
-    } } }catch{} }
-  }
-}catch{}
-try{
-  $ukeys=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')
-  foreach($k in $ukeys){ try{ Get-ItemProperty $k -EA SilentlyContinue | ForEach-Object {
-    try{
-      if($_.DisplayName){
-        $un=''; if($_.QuietUninstallString){$un=$_.QuietUninstallString}elseif($_.UninstallString){$un=$_.UninstallString}
-        $found=$false
-        if($_.DisplayIcon){
-          $ic=($_.DisplayIcon -split ',')[0].Trim('"')
-          if($ic -match '\.exe$' -and (Test-Path $ic -EA SilentlyContinue)){ [void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe=([IO.Path]::GetFileName($ic)).ToLower();uninst=$un}); $found=$true }
-        }
-        if((-not $found) -and $_.InstallLocation -and (Test-Path $_.InstallLocation -EA SilentlyContinue)){
-          Get-ChildItem $_.InstallLocation -Filter *.exe -EA SilentlyContinue | Select-Object -First 5 | ForEach-Object { [void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=$_.Name.ToLower();uninst=$un}); $found=$true }
-        }
-        if((-not $found) -and $un){ [void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe='';uninst=$un}) }
-      }
-    }catch{}
-  } }catch{} }
-}catch{}
-try{
-  $map=@{}
-  foreach($a in $out){ if($a.exe){ if(-not $map.ContainsKey($a.exe) -or (-not $map[$a.exe].uninst -and $a.uninst)){ $map[$a.exe]=$a } } }
-  $named = @($out | Where-Object { -not $_.exe -and $_.name })
-  $final = @($map.Values) + $named
-  if($final.Count -gt 400){ $final = $final | Select-Object -First 400 }
-  $sb=New-Object System.Text.StringBuilder
-  [void]$sb.Append('[')
-  $first=$true
-  foreach($a in $final){
-    try{
-      if(-not $first){ [void]$sb.Append(',') }
-      $first=$false
-      [void]$sb.Append('{"name":"'); [void]$sb.Append((JEsc $a.name)); [void]$sb.Append('","exe":"'); [void]$sb.Append((JEsc $a.exe)); [void]$sb.Append('","uninst":"'); [void]$sb.Append((JEsc $a.uninst)); [void]$sb.Append('"}')
-    }catch{}
-  }
-  [void]$sb.Append(']')
-  Write-Output ('<<<JSON>>>' + $sb.ToString() + '<<<ENDJSON>>>')
-}catch{ Write-Output '<<<JSON>>>[]<<<ENDJSON>>>' }
+function JEsc($s){if($null -eq $s){return ''};$s=[string]$s;$sb=[Text.StringBuilder]::new();foreach($ch in $s.ToCharArray()){$c=[int]$ch;if($ch -eq '\'){[void]$sb.Append('\\')}elseif($ch -eq '"'){[void]$sb.Append('\"')}elseif($c -eq 13){continue}elseif($c -eq 10){[void]$sb.Append('\n')}elseif($c -eq 9){[void]$sb.Append('\t')}elseif($c -lt 32){continue}else{[void]$sb.Append($ch)}};$sb.ToString()}
+$out=[Collections.ArrayList]::new()
+try{$sh=$null;try{$sh=New-Object -ComObject WScript.Shell}catch{};if($sh){$paths=@("$env:ProgramData\Microsoft\Windows\Start Menu\Programs","$env:APPDATA\Microsoft\Windows\Start Menu\Programs");foreach($p in $paths){try{if(Test-Path $p){Get-ChildItem $p -Recurse -Filter *.lnk -EA 0|ForEach-Object{try{$t=$sh.CreateShortcut($_.FullName).TargetPath;if($t -and $t -match '\.exe$'){[void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=([IO.Path]::GetFileName($t)).ToLower();uninst=''})}}catch{}}}}catch{}}}}catch{}
+try{$ukeys=@('HKLM:\SOFTWARE','HKLM:\SOFTWARE\WOW6432Node','HKCU:\SOFTWARE')|ForEach-Object{"$_\Microsoft\Windows\CurrentVersion\Uninstall\*"};foreach($k in $ukeys){try{Get-ItemProperty $k -EA 0|ForEach-Object{try{if($_.DisplayName){$un='';if($_.QuietUninstallString){$un=$_.QuietUninstallString}elseif($_.UninstallString){$un=$_.UninstallString};$found=$false;if($_.DisplayIcon){$ic=($_.DisplayIcon -split ',')[0].Trim('"');if($ic -match '\.exe$' -and (Test-Path $ic -EA 0)){[void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe=([IO.Path]::GetFileName($ic)).ToLower();uninst=$un});$found=$true}};if((-not $found) -and $_.InstallLocation -and (Test-Path $_.InstallLocation -EA 0)){Get-ChildItem $_.InstallLocation -Filter *.exe -EA 0|Select-Object -First 5|ForEach-Object{[void]$out.Add([pscustomobject]@{name=$_.BaseName;exe=$_.Name.ToLower();uninst=$un});$found=$true}};if((-not $found) -and $un){[void]$out.Add([pscustomobject]@{name=$_.DisplayName;exe='';uninst=$un})}}}catch{}}}catch{}}}catch{}
+try{$map=@{};foreach($a in $out){if($a.exe){if(-not $map.ContainsKey($a.exe) -or (-not $map[$a.exe].uninst -and $a.uninst)){$map[$a.exe]=$a}}};$named=@($out|Where-Object{-not $_.exe -and $_.name});$final=@($map.Values)+$named;if($final.Count -gt 400){$final=$final|Select-Object -First 400};$sb=[Text.StringBuilder]::new();[void]$sb.Append('[');$first=$true;foreach($a in $final){try{if(-not $first){[void]$sb.Append(',')};$first=$false;[void]$sb.Append('{"name":"');[void]$sb.Append((JEsc $a.name));[void]$sb.Append('","exe":"');[void]$sb.Append((JEsc $a.exe));[void]$sb.Append('","uninst":"');[void]$sb.Append((JEsc $a.uninst));[void]$sb.Append('"}')}catch{}};[void]$sb.Append(']');Write-Output ('<<<JSON>>>'+$sb.ToString()+'<<<ENDJSON>>>')}catch{Write-Output '<<<JSON>>>[]<<<ENDJSON>>>'}
 '@
-    # Sent over stdin (not as a -EncodedCommand argument) - this script is big enough that
-    # base64-encoding it onto the command line once hit "ssh.exe : The command line is too
-    # long". Piping it in has no such size limit.
-    $r = SSH-RunScriptT $ip $ps 25
-    if (-not $r) { $script:lastScanRaw = '(SSH-RunScriptT returned nothing - timeout or connect failure)'; return $null }
+    $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 25
+    if (-not $r) { $script:lastScanRaw = '(SSH-RunT returned nothing - timeout or connect failure)'; return $null }
     $script:lastScanRaw = $r.Substring(0, [Math]::Min(500, $r.Length))
     # SSH output can have stray warnings/banners mixed into it (stderr merged via 2>&1,
     # login banners, deprecation notices, etc). Pull only what's between our markers so
@@ -502,7 +388,7 @@ foreach($x in $b){
 [void]$sb.Append(']')
 $sb.ToString()
 '@
-    $r = SSH-RunScriptT $ip $ps 12
+    $r = SSH-RunT $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) 12
     if (-not $r) { return $null }
     return $r.Trim()
 }
