@@ -103,6 +103,28 @@ function JEsc($s) {
     }
     return $sb.ToString()
 }
+# Reverses JEsc - turns a JSON string literal's contents (as captured by the regex in
+# Get-AppScan) back into the real text. Paired with JEsc instead of ConvertFrom-Json
+# because ConvertFrom-Json itself was the actual bug (see Get-AppScan).
+function JUnesc($s) {
+    if (-not $s) { return '' }
+    $sb = New-Object System.Text.StringBuilder
+    $i = 0
+    while ($i -lt $s.Length) {
+        $ch = $s[$i]
+        if ($ch -eq '\' -and ($i + 1) -lt $s.Length) {
+            $n = $s[$i + 1]
+            if ($n -eq '"') { [void]$sb.Append('"'); $i += 2 }
+            elseif ($n -eq '\') { [void]$sb.Append('\'); $i += 2 }
+            elseif ($n -eq 'n') { [void]$sb.Append("`n"); $i += 2 }
+            elseif ($n -eq 't') { [void]$sb.Append("`t"); $i += 2 }
+            else { [void]$sb.Append($ch); $i += 1 }
+        } else {
+            [void]$sb.Append($ch); $i += 1
+        }
+    }
+    return $sb.ToString()
+}
 # Timeout-protected SSH call - used for anything that reads data back from the client
 # (scan, blocked-list, block/unblock). A slow or half-dead client can otherwise hang
 # the SSH call forever and freeze the whole single-threaded dashboard. Runs the SSH
@@ -340,19 +362,28 @@ function Get-AppScan($ip, $force) {
         $dbgLen = $rawApps.Length
         $dbgSample = $rawApps.Substring(0, [Math]::Min(300, $rawApps.Length))
         try {
-            $parsed = @($rawApps | ConvertFrom-Json)
+            # Deliberately NOT using ConvertFrom-Json here: on the real Windows PowerShell
+            # 5.1 machines this runs on, ConvertFrom-Json was found to scramble a
+            # several-KB JSON array of objects into a single merged object (every
+            # property becomes one big space-joined string of all the values) - the
+            # same symptom we first blamed on ConvertTo-Json, except it turned out to be
+            # the parser, not the serializer. The client's JSON here always has the
+            # exact shape {"name":"...","exe":"...","uninst":"..."}, so it's parsed with
+            # a regex instead of any built-in JSON engine - no ambiguity, no surprises.
+            $rx = [regex]'\{"name":"((?:[^"\\]|\\.)*)","exe":"((?:[^"\\]|\\.)*)","uninst":"((?:[^"\\]|\\.)*)"\}'
             $sb = New-Object System.Text.StringBuilder
             [void]$sb.Append('[')
             $first = $true
-            foreach ($a in $parsed) {
-                if (-not $a) { continue }
+            foreach ($m in $rx.Matches($rawApps)) {
                 try {
-                    $exe = ('' + $a.exe).ToLower()
-                    if ($exe -and $a.uninst) { $uninstMap[$exe] = ('' + $a.uninst) }
-                    $un = $(if ($a.uninst) { 1 } else { 0 })
+                    $name = JUnesc $m.Groups[1].Value
+                    $exe = (JUnesc $m.Groups[2].Value).ToLower()
+                    $uninst = JUnesc $m.Groups[3].Value
+                    if ($exe -and $uninst) { $uninstMap[$exe] = $uninst }
+                    $un = $(if ($uninst) { 1 } else { 0 })
                     if (-not $first) { [void]$sb.Append(',') }
                     $first = $false
-                    [void]$sb.Append('{"name":"'); [void]$sb.Append((JEsc $a.name)); [void]$sb.Append('","exe":"'); [void]$sb.Append((JEsc $exe)); [void]$sb.Append('","un":'); [void]$sb.Append($un); [void]$sb.Append('}')
+                    [void]$sb.Append('{"name":"'); [void]$sb.Append((JEsc $name)); [void]$sb.Append('","exe":"'); [void]$sb.Append((JEsc $exe)); [void]$sb.Append('","un":'); [void]$sb.Append($un); [void]$sb.Append('}')
                 } catch {}
             }
             [void]$sb.Append(']')
