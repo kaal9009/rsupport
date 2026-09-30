@@ -562,9 +562,17 @@ function Uninstall-App($ip, $exe) {
     # Write the real uninstall command into a .bat file on the client and launch it, rather
     # than trying to re-quote it ourselves - registry uninstall strings are already in a
     # form meant to run as-is from a command line, and this sidesteps quoting bugs entirely.
+    # Force silent switches based on the installer type, unless the command already has
+    # one (QuietUninstallString from the registry is already silent - leave those alone).
+    # Covers the three common installer families: MSI, Inno Setup (unins000.exe-style),
+    # and NSIS (the default fallback - Firefox, 7-Zip, Notepad++, VLC and most freeware
+    # all use NSIS and accept /S). Not every installer honors this (InstallShield/WiX
+    # bundles vary), but this silences the large majority instead of only MSI ones.
     $ps = @"
 `$u=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$unB64'))
-if(`$u -match '(?i)msiexec' -and `$u -notmatch '(?i)/q'){ `$u = `$u + ' /quiet /norestart' }
+if(`$u -match '(?i)msiexec'){ if(`$u -notmatch '(?i)/q'){ `$u = `$u + ' /quiet /norestart' } }
+elseif(`$u -match '(?i)unins\d*\.exe'){ if(`$u -notmatch '(?i)/VERYSILENT'){ `$u = `$u + ' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART' } }
+elseif(`$u -notmatch '(?i)(/S\b|/silent|/quiet|-ms\b|/qn)'){ `$u = `$u + ' /S' }
 `$d='C:\ProgramData\RemoteSupport'; New-Item `$d -ItemType Directory -Force | Out-Null
 `$bat=Join-Path `$d 'uninst_tmp.bat'
 Set-Content -Path `$bat -Value ("@echo off`r`n"+`$u) -Encoding ascii
@@ -572,7 +580,7 @@ Start-Process `$bat -WindowStyle Hidden
 "@
     SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
     $script:appScanCache.Remove($ip)
-    return "Uninstall started for $exe - if it needs confirmation, that'll show on the client's screen."
+    return "Uninstall started for $exe - running silently where the installer supports it. A few installer types (some InstallShield/WiX-based ones) may still show a window on the client."
 }
 function Blocked-All {
     $out = @()
@@ -1079,7 +1087,7 @@ async function appToggle(btn,exe,block){
     showAppModal(appCache[ip].apps,s,new Set(appCache[ip].prot),clients.find(c=>c.ip===ip)?.name||'',ip);}
 }
 async function appUninstall(btn,exe){
-  if(!confirm('Uninstall '+exe+' on this PC?\n\nThis launches the app\'s real uninstaller on the client - it may show a confirmation window there.'))return;
+  if(!confirm('Uninstall '+exe+' on this PC?\n\nThis runs the app\'s real uninstaller on the client silently (no window on their screen), where that installer supports it.'))return;
   const ip=document.getElementById('appWrap').dataset.ip;
   btn.disabled=true;btn.textContent='Uninstalling...';
   let msg='';try{const r=await fetch('/api/appuninstall',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,exe})});msg=(await r.json()).output||'';}catch(e){}
