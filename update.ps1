@@ -493,3 +493,117 @@ $ttr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File 
 if ($tuser) { schtasks /create /tn RemoteSupportThumb /tr "$ttr" /sc onlogon /ru "$tuser" /rl HIGHEST /it /f | Out-Null }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*thumbwatch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
 schtasks /run /tn RemoteSupportThumb *>$null
+
+# ============================================================
+#  Live audio listen (no DLL / no driver - pure WASAPI P/Invoke)
+#  A user-session watcher captures the default playback device's
+#  LOOPBACK audio (what the client hears) and serves it on
+#  127.0.0.1:9988 (loopback only - never exposed to the network).
+#  The dashboard reaches it through the EXISTING SSH connection
+#  with a local port-forward (ssh -L), so no new firewall port is
+#  opened and only an authenticated SSH user can ever connect.
+#  Captures only while a client is connected; idle = blocking
+#  accept (0% CPU). Runs in the user session so it hears the
+#  logged-in user's audio.
+# ============================================================
+$audioWatch = @'
+$ErrorActionPreference='SilentlyContinue'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.IO;
+namespace RSWasapi {
+ [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] public class MMDevEnum {}
+ [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ public interface IMMDeviceEnumerator {
+  int f0(int a,int b,out IntPtr c);
+  int GetDefaultAudioEndpoint(int dataFlow,int role,out IMMDevice ppDevice);
+ }
+ [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ public interface IMMDevice {
+  int Activate([MarshalAs(UnmanagedType.LPStruct)] Guid iid,int ctx,IntPtr p,[MarshalAs(UnmanagedType.IUnknown)] out object o);
+ }
+ [ComImport, Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ public interface IAudioClient {
+  int Initialize(int share,int flags,long dur,long period,IntPtr fmt,IntPtr guid);
+  int GetBufferSize(out uint n);
+  int GetStreamLatency(out long l);
+  int GetCurrentPadding(out uint p);
+  int IsFormatSupported(int share,IntPtr fmt,out IntPtr closest);
+  int GetMixFormat(out IntPtr fmt);
+  int GetDevicePeriod(out long def,out long min);
+  int Start();
+  int Stop();
+  int Reset();
+  int SetEventHandle(IntPtr h);
+  int GetService([MarshalAs(UnmanagedType.LPStruct)] Guid iid,[MarshalAs(UnmanagedType.IUnknown)] out object o);
+ }
+ [ComImport, Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ public interface IAudioCaptureClient {
+  int GetBuffer(out IntPtr data,out uint frames,out uint flags,out long dp,out long qp);
+  int ReleaseBuffer(uint frames);
+  int GetNextPacketSize(out uint frames);
+ }
+ public class Loop {
+  static Guid IID_AC=new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
+  static Guid IID_CC=new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
+  IAudioClient ac; IAudioCaptureClient cc;
+  public int Rate,Ch,Bits,Tag,Block;
+  public void Open(){
+   var en=(IMMDeviceEnumerator)(new MMDevEnum());
+   IMMDevice dev; en.GetDefaultAudioEndpoint(0,0,out dev);
+   object o; dev.Activate(IID_AC,23,IntPtr.Zero,out o); ac=(IAudioClient)o;
+   IntPtr pf; ac.GetMixFormat(out pf);
+   Tag=Marshal.ReadInt16(pf,0)&0xFFFF; Ch=Marshal.ReadInt16(pf,2)&0xFFFF; Rate=Marshal.ReadInt32(pf,4);
+   Block=Marshal.ReadInt16(pf,12)&0xFFFF; Bits=Marshal.ReadInt16(pf,14)&0xFFFF;
+   if(Tag==0xFFFE){ Tag=(Bits==32)?3:1; }
+   ac.Initialize(0,0x00020000,2000000,0,pf,IntPtr.Zero);
+   object o2; ac.GetService(IID_CC,out o2); cc=(IAudioCaptureClient)o2;
+   ac.Start();
+  }
+  public byte[] Read(){
+   uint pk; cc.GetNextPacketSize(out pk); if(pk==0){ return null; }
+   MemoryStream ms=new MemoryStream();
+   while(pk!=0){
+    IntPtr d; uint fr,fl; long a,b; cc.GetBuffer(out d,out fr,out fl,out a,out b);
+    int bytes=(int)fr*Block; byte[] buf=new byte[bytes];
+    if((fl&0x2)==0 && d!=IntPtr.Zero){ Marshal.Copy(d,buf,0,bytes); }
+    ms.Write(buf,0,bytes); cc.ReleaseBuffer(fr); cc.GetNextPacketSize(out pk);
+   }
+   return ms.ToArray();
+  }
+  public void Close(){ try{ac.Stop();}catch{} ac=null; cc=null; }
+ }
+}
+"@
+$listener=New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback,9988)
+try{ $listener.Start() }catch{ exit }
+while($true){
+  $client=$null; $ns=$null; $cap=$null
+  try{
+    $client=$listener.AcceptTcpClient()
+    $ns=$client.GetStream()
+    $cap=New-Object RSWasapi.Loop
+    $cap.Open()
+    $hdr=[Text.Encoding]::ASCII.GetBytes(("RSAUD {0} {1} {2} {3}`n" -f $cap.Rate,$cap.Ch,$cap.Bits,$cap.Tag))
+    $ns.Write($hdr,0,$hdr.Length)
+    while($true){
+      $data=$cap.Read()
+      if($data -and $data.Length){ $ns.Write($data,0,$data.Length) }
+      else{ Start-Sleep -Milliseconds 8 }
+    }
+  }catch{}
+  finally{
+    try{ $cap.Close() }catch{}
+    try{ $ns.Close() }catch{}
+    try{ $client.Close() }catch{}
+  }
+  Start-Sleep -Milliseconds 200
+}
+'@
+Set-Content -Path (Join-Path $dir 'audiolisten.ps1') -Value $audioWatch -Encoding UTF8
+$auser = (Get-CimInstance Win32_ComputerSystem).UserName
+$atr = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\audiolisten.ps1'
+if ($auser) { schtasks /create /tn RemoteSupportAudio /tr "$atr" /sc onlogon /ru "$auser" /rl HIGHEST /it /f | Out-Null }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*audiolisten.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
+schtasks /run /tn RemoteSupportAudio *>$null
