@@ -17,7 +17,7 @@ setlocal
 :: ============================================================
 
 set "PUBKEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILYrYVPUmgtNSjoL5aCG7zeT1fxgeohu/G45/Mk71usT informatics@CloudPulse"
-set "TSKEY=tskey-auth-kkw2FeaLYn11CNTRL-WjxzknaUsiiPavhcvq5TiiXS2cvL1R8M"
+set "TSKEY=tskey-auth-kasGcEFLLT11CNTRL-BXCcmKh8foikVHNnwTd9pivPyUavviR2"
 set "SVCUSER=svc"
 set "SVCPWD="
 
