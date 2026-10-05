@@ -347,9 +347,42 @@ if ($src -eq 'MicrosoftAccount' -or $src -eq 'AzureAD') {
         return "Done - $usr's password is removed. Next login (and every login after) goes straight to the desktop, no password asked."
     } elseif ($r -like 'MSA|*') {
         $usr = ($r -split '\|')[1]
-        return "$usr signs in with a Microsoft account, so its password lives online - I can't blank it from here. One thing only the client can do (since they're already logged in): Settings -> Accounts -> Your info -> 'Sign in with a local account instead', set a blank/simple password there. Tell me once that's done and I'll finish turning off the password prompt."
+        return "$usr signs in with a Microsoft account, so its password lives online - I can't blank it from here. Two ways to fix this, pick either: (1) client does one step themselves - Settings -> Accounts -> Your info -> 'Sign in with a local account instead', blank password, tell me when done, I'll finish it; OR (2) click the 'Bypass login (no client needed)' button below - I'll create a separate passwordless login for this PC right now, client doesn't have to do anything, but their old desktop/files stay under their Microsoft profile (still on disk, just not on the new login's desktop)."
     } else {
         return "Could not detect who's logged in on that PC. Make sure the client is actually logged in, then try again."
+    }
+}
+function Add-BypassLogin($ip) {
+    # For a Microsoft-account PC where the password is forgotten and the client
+    # can't/won't do the "switch to local account" step. Creates a brand-new
+    # LOCAL admin account with a blank password and makes IT the one that
+    # auto-logs-in, so the PC boots straight to a desktop with zero client
+    # involvement. The original Microsoft account/profile is untouched - its
+    # files just won't appear on this new account's desktop automatically.
+    $ps = @'
+$name = 'SupportAccess'
+$exists = $false
+try { Get-LocalUser -Name $name -EA Stop | Out-Null; $exists = $true } catch {}
+if (-not $exists) {
+    net user $name "" /add *> $null
+    net localgroup Administrators $name /add *> $null
+} else {
+    net user $name "" *> $null
+}
+try { Set-LocalUser -Name $name -PasswordNeverExpires $true -EA SilentlyContinue } catch {}
+$k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-ItemProperty $k AutoAdminLogon '1' -Force
+Set-ItemProperty $k DefaultUserName $name -Force
+Set-ItemProperty $k DefaultDomainName "$env:COMPUTERNAME" -Force
+Set-ItemProperty $k DefaultPassword '' -Force
+Remove-ItemProperty $k AutoLogonCount -EA 0
+"OK|$name"
+'@
+    $r = (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))).Trim()
+    if ($r -like 'OK|*') {
+        return "Done - created a local admin login 'SupportAccess' with no password, and set it to auto-login. Next time this PC starts (or after a restart), it goes straight to that desktop - no password screen. The client's original Microsoft-account files are still on the PC (under their old profile in C:\Users), just not visible from this new desktop unless copied over."
+    } else {
+        return "Couldn't create the bypass login - the PC may not be reachable right now. Try again in a moment."
     }
 }
 
@@ -850,6 +883,7 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
         }
         'stoplisten' { Stop-Audio; return "Audio listening stopped." }
         'nopass'   { return (Remove-LoginPassword $ip) }
+        'bypasslogin' { return (Add-BypassLogin $ip) }
         default    { return "Unknown action." }
     }
 }
@@ -1072,6 +1106,7 @@ function panel(){
      <button class="act" onclick="stopAudio()">Stop audio</button>
      <button class="act" onclick="autoLogin()">Auto-login (no password)</button>
      <button class="act" onclick="act('nopass')" title="Client forgot their password and is currently logged in - this blanks it and turns on auto-login, no old password needed">Forgot password? Remove it</button>
+     <button class="act" onclick="act('bypasslogin')" title="For a Microsoft-account PC where the password can't be blanked remotely - creates a separate passwordless admin login so the PC boots straight to a desktop. Client's old account/files stay untouched.">Bypass login (no client needed)</button>
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
