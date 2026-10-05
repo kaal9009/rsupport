@@ -10,7 +10,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "support_saas_db"
-database_id = "REPLACE_AFTER_CREATE"
+database_id = "6576fb82-9484-46e9-afed-0ce7bcff4dab"
 
 # Secrets (set with: wrangler secret put <NAME>):
 #   SESSION_SECRET   - random long string, used to sign session cookies
