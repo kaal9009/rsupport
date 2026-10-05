@@ -315,6 +315,43 @@ function Clear-AutoLogin($ip) {
     SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps)) | Out-Null
     return "Auto-login turned off. This PC will ask for a password again."
 }
+function Remove-LoginPassword($ip) {
+    # For a client who FORGOT their password but is currently logged in.
+    # Works for LOCAL accounts (blanks the password + turns on auto-login, no
+    # old password needed - the admin session itself is the authority).
+    # A Microsoft-account sign-in can't have its cloud password blanked
+    # remotely, so that case is detected and reported instead of silently
+    # failing or being skipped.
+    $ps = @'
+$cu = (Get-CimInstance Win32_ComputerSystem).UserName
+if (-not $cu) { "NOUSER||" ; exit }
+$parts = $cu -split '\\',2
+$usr = if ($parts.Count -eq 2) { $parts[1] } else { $parts[0] }
+try { $src = (Get-LocalUser -Name $usr -EA Stop).PrincipalSource.ToString() } catch { $src = 'Unknown' }
+if ($src -eq 'MicrosoftAccount' -or $src -eq 'AzureAD') {
+    "MSA|$usr|$src"
+} else {
+    net user "$usr" "" *> $null
+    $k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    Set-ItemProperty $k AutoAdminLogon '1' -Force
+    Set-ItemProperty $k DefaultUserName "$usr" -Force
+    Set-ItemProperty $k DefaultDomainName "$env:COMPUTERNAME" -Force
+    Set-ItemProperty $k DefaultPassword '' -Force
+    Remove-ItemProperty $k AutoLogonCount -EA 0
+    "OK|$usr|$src"
+}
+'@
+    $r = (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))).Trim()
+    if ($r -like 'OK|*') {
+        $usr = ($r -split '\|')[1]
+        return "Done - $usr's password is removed. Next login (and every login after) goes straight to the desktop, no password asked."
+    } elseif ($r -like 'MSA|*') {
+        $usr = ($r -split '\|')[1]
+        return "$usr signs in with a Microsoft account, so its password lives online - I can't blank it from here. One thing only the client can do (since they're already logged in): Settings -> Accounts -> Your info -> 'Sign in with a local account instead', set a blank/simple password there. Tell me once that's done and I'll finish turning off the password prompt."
+    } else {
+        return "Could not detect who's logged in on that PC. Make sure the client is actually logged in, then try again."
+    }
+}
 
 function Scan-Apps($ip) {
     # Every step is wrapped so one bad shortcut/registry entry can never abort the whole
@@ -812,6 +849,7 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
             return "Listening to this client's audio (no screen session). Click 'Stop audio' to end. If silent, make sure something is actually playing on the client."
         }
         'stoplisten' { Stop-Audio; return "Audio listening stopped." }
+        'nopass'   { return (Remove-LoginPassword $ip) }
         default    { return "Unknown action." }
     }
 }
@@ -1033,6 +1071,7 @@ function panel(){
      </div>
      <button class="act" onclick="stopAudio()">Stop audio</button>
      <button class="act" onclick="autoLogin()">Auto-login (no password)</button>
+     <button class="act" onclick="act('nopass')" title="Client forgot their password and is currently logged in - this blanks it and turns on auto-login, no old password needed">Forgot password? Remove it</button>
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
