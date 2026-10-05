@@ -1,0 +1,17 @@
+name = "support-saas"
+main = "worker/index.js"
+compatibility_date = "2024-11-01"
+
+# Static files (admin/buyer/install pages) served from ./public
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "support_saas_db"
+database_id = "REPLACE_AFTER_CREATE"
+
+# Secrets (set with: wrangler secret put <NAME>):
+#   SESSION_SECRET   - random long string, used to sign session cookies
+#   TAILSCALE_API_KEY - (Phase 2) used to provision per-buyer tailnets/keys

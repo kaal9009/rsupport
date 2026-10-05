@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buyer Login</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Buyer login</h1>
+    <p class="sub">Sign in with the email and temporary password you were given.</p>
+    <label>Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <div class="err" id="err"></div>
+    <button class="primary" id="go">Sign in</button>
+  </div>
+</div>
+<script>
+  document.getElementById('go').onclick = async () => {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const err = document.getElementById('err');
+    err.textContent = '';
+    try {
+      const res = await fetch('/api/buyer/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+      location.href = data.must_reset_password ? '/buyer/reset-password.html' : '/buyer/dashboard.html';
+    } catch (e) { err.textContent = 'Could not reach the server.'; }
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap wide">
+  <div class="topbar">
+    <div class="brand">Master Admin</div>
+    <a href="#" id="logout">Log out</a>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <h2 style="margin-top:0">Add a buyer</h2>
+    <label>Buyer email</label>
+    <input id="email" type="email">
+    <label>Business name</label>
+    <input id="bizname">
+    <div class="err" id="err"></div>
+    <button class="primary" id="addBuyer">Create buyer account</button>
+    <div id="tempBox" style="display:none">
+      <p class="sub">Temporary password (shown once — copy it now and send it to the buyer):</p>
+      <div class="code" id="tempPw" style="font-size:16px"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <h2 style="margin-top:0">Open support requests</h2>
+    <table id="escTable">
+      <thead><tr><th>Buyer</th><th>Client</th><th>Note</th><th>Requested</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="sub" id="escEmpty" style="display:none">No open requests.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">All buyers &amp; clients</h2>
+    <table id="buyersTable">
+      <thead><tr><th>Business</th><th>Email</th><th>Status</th><th>Added</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h3>Clients (across all buyers)</h3>
+    <table id="clientsTable">
+      <thead><tr><th>Client</th><th>Buyer</th><th>Status</th><th>Admin access allowed?</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<script>
+  async function requireAuth() {
+    const res = await fetch('/api/admin/buyers');
+    if (!res.ok) { location.href = '/admin/index.html'; return false; }
+    return true;
+  }
+
+  async function loadBuyers() {
+    const res = await fetch('/api/admin/buyers');
+    const { buyers } = await res.json();
+    const tbody = document.querySelector('#buyersTable tbody');
+    tbody.innerHTML = '';
+    for (const b of buyers) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(b.business_name)}</td><td>${escapeHtml(b.email)}</td>
+        <td><span class="pill">${escapeHtml(b.status)}</span></td><td>${new Date(b.created_at).toLocaleDateString()}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function loadClients() {
+    const res = await fetch('/api/admin/clients');
+    const { clients } = await res.json();
+    const tbody = document.querySelector('#clientsTable tbody');
+    tbody.innerHTML = '';
+    for (const c of clients) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(c.label)}</td><td>${escapeHtml(c.business_name)}</td>
+        <td><span class="pill">${escapeHtml(c.status)}</span></td><td>${c.admin_support_allowed ? 'Yes' : 'No'}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function loadEscalations() {
+    const res = await fetch('/api/admin/escalations');
+    const { escalations } = await res.json();
+    const tbody = document.querySelector('#escTable tbody');
+    tbody.innerHTML = '';
+    document.getElementById('escEmpty').style.display = escalations.length ? 'none' : 'block';
+    for (const e of escalations) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(e.business_name)}</td><td>${escapeHtml(e.client_label)}</td>
+        <td>${escapeHtml(e.note || '')}</td><td>${new Date(e.created_at).toLocaleString()}</td>
+        <td><button class="secondary" style="width:auto;margin:0;padding:6px 12px" data-id="${e.id}">Mark resolved</button></td>`;
+      tbody.appendChild(tr);
+    }
+    tbody.querySelectorAll('button').forEach((btn) => {
+      btn.onclick = async () => {
+        await fetch('/api/admin/escalations/' + btn.dataset.id + '/resolve', { method: 'POST' });
+        loadEscalations();
+      };
+    });
+  }
+
+  document.getElementById('addBuyer').onclick = async () => {
+    const email = document.getElementById('email').value.trim();
+    const business_name = document.getElementById('bizname').value.trim();
+    const err = document.getElementById('err');
+    err.textContent = '';
+    if (!email || !business_name) { err.textContent = 'Email and business name are required.'; return; }
+    const res = await fetch('/api/admin/buyers', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, business_name })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Could not create buyer'; return; }
+    document.getElementById('tempBox').style.display = 'block';
+    document.getElementById('tempPw').textContent = data.temp_password;
+    document.getElementById('email').value = '';
+    document.getElementById('bizname').value = '';
+    loadBuyers();
+  };
+
+  document.getElementById('logout').onclick = async (e) => {
+    e.preventDefault();
+    await fetch('/api/admin/logout', { method: 'POST' });
+    location.href = '/admin/index.html';
+  };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  (async () => {
+    if (await requireAuth()) { loadBuyers(); loadClients(); loadEscalations(); }
+  })();
+</script>
+</body>
+</html>

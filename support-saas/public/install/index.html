@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirm Remote Support</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">Loading…</div>
+</div>
+<script>
+  const code = location.pathname.split('/').pop();
+
+  async function load() {
+    const card = document.getElementById('card');
+    let res, data;
+    try {
+      res = await fetch('/api/install/' + encodeURIComponent(code));
+      data = await res.json();
+    } catch (e) {
+      card.innerHTML = '<p class="err">Could not reach the server. Check your internet connection and reload.</p>';
+      return;
+    }
+    if (!res.ok) {
+      card.innerHTML = `<h1>Can't continue</h1><p class="sub">${escapeHtml(data.error || 'Something went wrong.')}</p>
+        <p class="sub">Ask your technician for a fresh code.</p>`;
+      return;
+    }
+    render(data);
+  }
+
+  function render(data) {
+    const card = document.getElementById('card');
+    card.innerHTML = `
+      <h1>Allow remote support?</h1>
+      <p class="sub"><strong>${escapeHtml(data.business_name)}</strong> wants to connect to this PC to help you.
+      This installs a small support agent that lets them see and control this computer remotely, over an
+      encrypted connection, until the session ends. It does <strong>not</strong> change your Windows password
+      or create any new account on this PC. You can remove it at any time.</p>
+      <button class="primary" id="agree">I agree — set up support</button>
+      <button class="secondary" id="decline">Cancel</button>
+      <div class="err" id="err"></div>
+    `;
+    document.getElementById('decline').onclick = () => { location.href = '/'; };
+    document.getElementById('agree').onclick = async () => {
+      const btn = document.getElementById('agree');
+      btn.disabled = true; btn.textContent = 'Setting up…';
+      try {
+        const res = await fetch('/api/install/' + encodeURIComponent(code) + '/consent', { method: 'POST' });
+        if (!res.ok) {
+          const d = await res.json();
+          document.getElementById('err').textContent = d.error || 'Something went wrong.';
+          btn.disabled = false; btn.textContent = 'I agree — set up support';
+          return;
+        }
+        location.href = '/api/install/' + encodeURIComponent(code) + '/download';
+        card.innerHTML = `<h1>Downloading…</h1><p class="sub">Open the downloaded file and run it. A black window
+          will appear for a minute while it connects — you can close it once it says "Connected".</p>`;
+      } catch (e) {
+        document.getElementById('err').textContent = 'Could not reach the server.';
+        btn.disabled = false; btn.textContent = 'I agree — set up support';
+      }
+    };
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  load();
+</script>
+</body>
+</html>

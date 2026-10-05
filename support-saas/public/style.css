@@ -1,0 +1,37 @@
+:root{
+  --bg:#FAF8F3; --card:#FFFFFF; --ink:#1C1F26; --sub:#5B6472; --line:#E6E1D6;
+  --accent:#0E7C6B; --accent-soft:#0E7C6B1A; --accent-ink:#FAF8F3; --danger:#B3261E;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181D; --card:#1C2026; --ink:#F2F0EA; --sub:#9AA3AF; --line:#2B2F37;
+    --accent:#34C9A7; --accent-soft:#34C9A733; --accent-ink:#0B1310; --danger:#FF6B5E;
+    color-scheme: dark;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Source Sans 3',system-ui,-apple-system,sans-serif;
+     min-height:100%;padding:40px 16px}
+h1,h2{font-family:'Fraunces',Georgia,serif;margin:0 0 8px}
+.wrap{max-width:460px;margin:0 auto}
+.wrap.wide{max-width:920px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:32px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+p.sub{color:var(--sub);font-size:14.5px;margin:0 0 24px;line-height:1.5}
+label{display:block;font-size:13px;font-weight:600;color:var(--sub);margin:16px 0 6px}
+input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:15px}
+button{cursor:pointer;border:none;border-radius:8px;padding:13px 20px;font-size:14.5px;font-weight:600;width:100%;margin-top:20px}
+button.primary{background:var(--accent);color:var(--accent-ink)}
+button.secondary{background:transparent;border:1px solid var(--line);color:var(--ink)}
+button:disabled{opacity:.5;cursor:default}
+.err{color:var(--danger);font-size:13.5px;margin-top:10px;min-height:1px}
+.ok{color:var(--accent);font-size:13.5px;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.4px}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap}
+.pill{display:inline-flex;font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px;background:var(--accent-soft);color:var(--accent)}
+.code{font-family:ui-monospace,monospace;font-size:22px;letter-spacing:2px;background:var(--accent-soft);color:var(--accent);
+      padding:14px 18px;border-radius:10px;text-align:center;margin:16px 0}
+a{color:var(--accent);text-decoration:none;font-size:14px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+.topbar .brand{font-family:'Fraunces',Georgia,serif;font-size:19px;font-weight:600}

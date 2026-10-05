@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enter Support Code</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Remote Support</h1>
+    <p class="sub">Your technician gave you a short code. Enter it below to set up your support connection.</p>
+    <label for="code">Support code</label>
+    <input id="code" placeholder="7F3K-9Q2L" autocapitalize="characters" autocomplete="off">
+    <div class="err" id="err"></div>
+    <button class="primary" id="go">Continue</button>
+  </div>
+</div>
+<script>
+  const input = document.getElementById('code');
+  const err = document.getElementById('err');
+  document.getElementById('go').onclick = () => {
+    const code = input.value.trim().toUpperCase();
+    if (!code) { err.textContent = 'Please enter the code your technician gave you.'; return; }
+    location.href = '/install/' + encodeURIComponent(code);
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('go').click(); });
+</script>
+</body>
+</html>

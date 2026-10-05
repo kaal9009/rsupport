@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buyer Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap wide">
+  <div class="topbar">
+    <div class="brand" id="brand">Dashboard</div>
+    <a href="#" id="logout">Log out</a>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <div class="row">
+      <div>
+        <h2 style="margin:0">Add a new client</h2>
+        <p class="sub" style="margin:4px 0 0">Give the generated code to your client — valid for 30 minutes.</p>
+      </div>
+    </div>
+    <label>Client / PC name (for your own reference)</label>
+    <input id="label" placeholder="e.g. Sharma Uncle - laptop">
+    <div class="err" id="err"></div>
+    <button class="primary" id="addClient">Generate code</button>
+    <div id="codeBox" style="display:none">
+      <div class="code" id="codeText"></div>
+      <p class="sub" style="text-align:center;margin-top:-6px">Tell your client to go to this site and enter this code. Expires in 30 minutes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Your clients</h2>
+    <table id="clientsTable">
+      <thead><tr><th>Name</th><th>Status</th><th>Added</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="sub" id="empty" style="display:none">No clients yet — add one above.</p>
+  </div>
+</div>
+<script>
+  async function requireAuth() {
+    const res = await fetch('/api/buyer/me');
+    if (!res.ok) { location.href = '/buyer/index.html'; return null; }
+    const { buyer } = await res.json();
+    if (buyer.must_reset_password) { location.href = '/buyer/reset-password.html'; return null; }
+    document.getElementById('brand').textContent = buyer.business_name;
+    return buyer;
+  }
+
+  async function loadClients() {
+    const res = await fetch('/api/buyer/clients');
+    const { clients } = await res.json();
+    const tbody = document.querySelector('#clientsTable tbody');
+    tbody.innerHTML = '';
+    document.getElementById('empty').style.display = clients.length ? 'none' : 'block';
+    for (const c of clients) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(c.label)}</td><td><span class="pill">${escapeHtml(c.status)}</span></td><td>${new Date(c.created_at).toLocaleString()}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  document.getElementById('addClient').onclick = async () => {
+    const label = document.getElementById('label').value.trim();
+    const err = document.getElementById('err');
+    err.textContent = '';
+    if (!label) { err.textContent = 'Enter a name for this client first.'; return; }
+    const res = await fetch('/api/buyer/clients', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Could not create client'; return; }
+    document.getElementById('codeBox').style.display = 'block';
+    document.getElementById('codeText').textContent = data.code;
+    document.getElementById('label').value = '';
+    loadClients();
+  };
+
+  document.getElementById('logout').onclick = async (e) => {
+    e.preventDefault();
+    await fetch('/api/buyer/logout', { method: 'POST' });
+    location.href = '/buyer/index.html';
+  };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  (async () => { if (await requireAuth()) loadClients(); })();
+</script>
+</body>
+</html>
