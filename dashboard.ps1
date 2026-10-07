@@ -175,13 +175,17 @@ $up=(Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
 '@
 
 function Lock-Status($ip) {
-    $r = SSH-Run $ip 'powershell -NoProfile -Command "if(Test-Path (Join-Path $env:ProgramData ''RemoteSupport\LOCK.flag'')){''YESLOCK''}else{''NOLOCK''}"'
+    # Timeout-protected (not SSH-Run): this is polled automatically, so an unreachable/
+    # rebooting client must never be able to hang the single-threaded dashboard.
+    $r = SSH-RunT $ip 'powershell -NoProfile -Command "if(Test-Path (Join-Path $env:ProgramData ''RemoteSupport\LOCK.flag'')){''YESLOCK''}else{''NOLOCK''}"' 5
     if ($r -match 'YESLOCK') { return 'locked' }
     elseif ($r -match 'NOLOCK') { return 'unlocked' }
     else { return 'unknown' }
 }
 function Get-Lock($ip) {
-    $c = SSH-Run $ip 'cmd /c type C:\ProgramData\RemoteSupport\config.txt'
+    # Timeout-protected: polled automatically, must never hang the single-threaded dashboard.
+    $c = SSH-RunT $ip 'cmd /c type C:\ProgramData\RemoteSupport\config.txt' 5
+    if (-not $c) { $c = '' }
     $text=''; $color=''; $img=''
     foreach ($l in ($c -split "`n")) {
         if ($l -match '^LOCK_TEXT=(.*)')  { $text  = $matches[1].Trim() }
@@ -224,7 +228,9 @@ Set-Content -Path `$f -Value `$k -Encoding ascii
 }
 # Read back which mode the client currently has (blue/black), plus whether it's locked right now
 function Get-LockMode($ip) {
-    $c = SSH-Run $ip 'cmd /c type C:\ProgramData\RemoteSupport\config.txt'
+    # Timeout-protected: polled automatically, must never hang the single-threaded dashboard.
+    $c = SSH-RunT $ip 'cmd /c type C:\ProgramData\RemoteSupport\config.txt' 5
+    if (-not $c) { $c = '' }
     $mode='black'
     foreach ($l in ($c -split "`n")) { if ($l -match '^LOCK_MODE=(.*)') { $mode = $matches[1].Trim().ToLower() } }
     if ($mode -ne 'blue' -and $mode -ne 'black') { $mode='black' }
@@ -266,7 +272,16 @@ Remove-Item (Join-Path `$d 'workmon.on') -Force -EA 0
     return 'off'
 }
 function Get-WorkCover($ip) {
-    $r = SSH-Run $ip 'powershell -NoProfile -Command "$f=''C:\ProgramData\RemoteSupport\WORKCOVER.flag''; if(Test-Path $f){(Get-Content $f -Raw).Trim()}else{''off''}"'
+    # Timeout-protected (THE fix for "2nd restart does nothing until dashboard is
+    # relaunched"): this function is polled every 5s by the frontend's checkWork() for
+    # whichever client is selected. It used to call SSH-Run (fully blocking, no
+    # timeout wrapper) - so if the SELECTED client was mid-reboot (e.g. right after you
+    # clicked Restart) when a poll landed, that one blocking SSH call could hang the
+    # whole single-threaded dashboard indefinitely, freezing every other button
+    # (including a second Restart click) until the dashboard process was killed and
+    # relaunched. SSH-RunT bounds it to 5s via a background job, so a rebooting/
+    # unreachable client can never again freeze the dashboard.
+    $r = SSH-RunT $ip 'powershell -NoProfile -Command "$f=''C:\ProgramData\RemoteSupport\WORKCOVER.flag''; if(Test-Path $f){(Get-Content $f -Raw).Trim()}else{''off''}"' 5
     $m = ($r | Out-String).Trim().ToLower()
     if ($m -ne 'update' -and $m -ne 'black') { $m = 'off' }
     return $m
