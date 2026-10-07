@@ -831,33 +831,36 @@ function Do-Action($ip, $action) {
         'restart'  { SSH-Fire $ip 'shutdown /r /t 0 /f' 2; return "Restart sent." }
         'shutdown' { SSH-Fire $ip 'shutdown /s /t 0 /f' 2; return "Shutdown sent." }
         'stoprestart' {
-            # "Fake shutdown -> restart in 5 min". Time-critical, so everything is
-            # fire-and-forget (never wait for an SSH reply).
-            #  1) cancel the running shutdown AND schedule a restart 5 min later, in ONE
-            #     remote command so the order is guaranteed (/a before /r). Sent twice.
-            #  2) instantly flip the client to the blue Windows-update cover (LOCK_MODE=blue)
-            #     and drop LOCK.flag in the SAME shot, so the update screen shows within a
-            #     couple of seconds while the shutdown is cancelled underneath.
-            #  3) keep that cover fresh (heartbeat) only until just before the restart,
-            #     then stop, so the PC reboots clean.
+            # "Fake shutdown -> instant SILENT restart" - nothing visible to the client at all.
+            # Time-critical, fire-and-forget:
+            #  1) instantly flip the client to the BLACK "off" cover (LOCK_MODE=off - pure
+            #     black, zero text/spinner/cursor, looks like the monitor is off) and drop
+            #     LOCK.flag, so the screen goes black within ~2-3 seconds.
+            #  2) a brief beat later (so the black cover is already up), cancel any pending
+            #     shutdown and restart IMMEDIATELY (/t 0). At t=0 Windows does NOT show its
+            #     native "You're about to be signed out" countdown dialog (that dialog only
+            #     appears when the timeout is >0) - so the client sees nothing at all, just
+            #     black, then the PC restarts in whatever time a normal restart takes (no
+            #     artificial 5-min wait anymore).
             $u = Login-For $ip
             $sshOpts = @('-o','StrictHostKeyChecking=no','-o','BatchMode=yes','-o','ConnectTimeout=4')
-            $rc = 'shutdown /a & shutdown /r /t 300 /f'
-            1..2 | ForEach-Object {
-                Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", $rc)) -ErrorAction SilentlyContinue
-            }
             $coverPs = @'
 $f='C:\ProgramData\RemoteSupport\config.txt'
 $d=Split-Path $f; if(-not(Test-Path $d)){New-Item -ItemType Directory -Path $d -Force|Out-Null}
 $k=@(); if(Test-Path $f){$k=@(Get-Content $f | Where-Object {$_ -notmatch '^LOCK_MODE=' -and $_.Trim() -ne ''})}
-$k+='LOCK_MODE=blue'
+$k+='LOCK_MODE=off'
 Set-Content -Path $f -Value $k -Encoding ascii
 Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding ascii
 '@
             Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", ('powershell -NoProfile -EncodedCommand ' + (Enc $coverPs)))) -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 700
+            $rc = 'shutdown /a & shutdown /r /t 0 /f'
+            1..2 | ForEach-Object {
+                Start-Process ssh -WindowStyle Hidden -ArgumentList ($sshOpts + @("$u@$ip", $rc)) -ErrorAction SilentlyContinue
+            }
             $script:lockedClients[$ip] = $true
-            $script:deadUntil[$ip] = (Get-Date).AddSeconds(320)
-            return "Done - shutdown cancelled, blue Windows-update screen showing, PC restarts in ~5 min."
+            $script:deadUntil[$ip] = (Get-Date).AddSeconds(60)
+            return "Done - screen went black silently (no text), PC is restarting now."
         }
         'health'   { return (SSH-Run $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $reportPs))) }
         'who'      { return (SSH-Run $ip 'query user') }
