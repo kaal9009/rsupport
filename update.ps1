@@ -277,6 +277,9 @@ schtasks /run /tn RemoteSupportLockWatch *>$null
 # --- Auto silent-restart: fires the instant ANY shutdown/restart is triggered on this PC ---
 # (by the client, Windows Update, anyone) - flips cover to black then makes it immediate/silent,
 # no manual Action1 run or dashboard click needed. Preserves shutdown-vs-restart type.
+# The watcher itself is deployed to EVERY client, but only ACTS where AUTOSILENT=on is set
+# in config.txt - OFF by default everywhere; the dashboard's per-client "Auto silent restart"
+# ON/OFF button is what writes that flag, so this only runs on whichever clients you choose.
 $shutdownCode = @'
 $ErrorActionPreference='SilentlyContinue'
 Add-Type -AssemblyName System.Core
@@ -285,8 +288,14 @@ if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-
 $cfg=Join-Path $dir 'config.txt'
 $flag=Join-Path $dir 'LOCK.flag'
 $script:busy=$false
+function Enabled(){
+  if(-not (Test-Path $cfg)){ return $false }
+  foreach($l in Get-Content $cfg){ if($l -match '^AUTOSILENT=(.*)$'){ return ($matches[1].Trim().ToLower() -eq 'on') } }
+  return $false
+}
 function OnShutdownEvent($rec){
   if($script:busy){ return }
+  if(-not (Enabled)){ return }
   $script:busy=$true
   try{
     $msg=$null
