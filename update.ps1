@@ -274,6 +274,55 @@ if ($luser) { schtasks /create /tn RemoteSupportLockWatch /tr "$ltr" /sc onlogon
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*lockwatch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
 schtasks /run /tn RemoteSupportLockWatch *>$null
 
+# --- Auto silent-restart: fires the instant ANY shutdown/restart is triggered on this PC ---
+# (by the client, Windows Update, anyone) - flips cover to black then makes it immediate/silent,
+# no manual Action1 run or dashboard click needed. Preserves shutdown-vs-restart type.
+$shutdownCode = @'
+$ErrorActionPreference='SilentlyContinue'
+Add-Type -AssemblyName System.Core
+$dir='C:\ProgramData\RemoteSupport'
+if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+$cfg=Join-Path $dir 'config.txt'
+$flag=Join-Path $dir 'LOCK.flag'
+$script:busy=$false
+function OnShutdownEvent($rec){
+  if($script:busy){ return }
+  $script:busy=$true
+  try{
+    $msg=$null
+    try{ $msg=$rec.FormatDescription() }catch{}
+    if(-not $msg){ $msg='' }
+    $isRestart = ($msg -match '(?i)restart')
+    # 1) flip cover to pure black (off mode: zero text/spinner/cursor) - local write, no SSH,
+    #    picked up by lockwatch.ps1 (already polling every 250ms) almost instantly
+    $k=@()
+    if(Test-Path $cfg){ $k=@(Get-Content $cfg | Where-Object { $_ -notmatch '^LOCK_MODE=' -and $_.Trim() -ne '' }) }
+    $k+='LOCK_MODE=off'
+    Set-Content -Path $cfg -Value $k -Encoding ascii
+    Set-Content -Path $flag -Value '' -Encoding ascii
+    Start-Sleep -Milliseconds 700
+    # 2) cancel whatever delayed/dialog-triggering shutdown was pending and reissue it as
+    #    immediate (t=0 -> Windows shows no "about to be signed out" warning dialog),
+    #    keeping the same type (restart vs full shutdown) the original trigger asked for
+    cmd /c "shutdown /a" *>$null
+    if($isRestart){ cmd /c "shutdown /r /t 0 /f" } else { cmd /c "shutdown /s /t 0 /f" }
+  } finally { $script:busy=$false }
+}
+$query=New-Object System.Diagnostics.Eventing.Reader.EventLogQuery('System','LogAlways','*[System[(EventID=1074)]]')
+$watcher=New-Object System.Diagnostics.Eventing.Reader.EventLogWatcher($query)
+Register-ObjectEvent -InputObject $watcher -EventName EventRecordWritten -SourceIdentifier RSShutdownWatch -Action {
+  OnShutdownEvent $EventArgs.EventRecord
+} | Out-Null
+$watcher.Enabled=$true
+while($true){ Start-Sleep -Seconds 30 }
+'@
+Set-Content -Path (Join-Path $dir 'shutdownwatch.ps1') -Value $shutdownCode -Encoding UTF8
+$str = 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\RemoteSupport\shutdownwatch.ps1'
+schtasks /create /tn RemoteSupportShutdownWatch /tr "$str" /sc onstart /ru SYSTEM /rl HIGHEST /f | Out-Null
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -EA 0 | Where-Object { $_.CommandLine -like '*shutdownwatch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }
+schtasks /run /tn RemoteSupportShutdownWatch *>$null
+
+
 # --- RustDesk: screen + black-screen + audio, direct-IP over Tailscale (no account, no server) ---
 try {
   $rdExe = @('C:\Program Files\RustDesk\rustdesk.exe','C:\Program Files (x86)\RustDesk\rustdesk.exe') | Where-Object {Test-Path $_} | Select-Object -First 1
